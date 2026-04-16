@@ -1,0 +1,38 @@
+# Secrets / credentials
+.env
+blink_credentials.json
+*.lock
+pause.lock
+
+# Runtime data
+data/
+logs/
+# Per-day snap directories stay local (huge + contain images of user's property),
+# but ship the hand-curated regression reference JPEGs that the species-ID test
+# suite depends on (see CLAUDE.md §15).
+evidence/*
+!evidence/reference/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo

@@ -1,0 +1,212 @@
+# Cardinal Nest Monitor
+
+> [!NOTE]
+> ### 🥚 Nest Status: **Eggs incubating**
+> Mom is on the nest. System is watching 24/7. *I'll update this page as they hatch and fledge.*
+
+![Brown Thrasher stealing an egg from the cardinal nest](evidence/reference/thrasher_stealing_egg_highlighted.gif)
+
+The female cardinal chose the rose bush by the back door. It was a terrible location, strategically speaking: low to the ground, close to foot traffic, visible from the kitchen window. But she was not consulting anyone. She built the nest in three days, a tight cup of twigs and grass wedged into the thorns, and by the second week of April there were eggs in it.
+
+I know this because of the camera. A Blink Outdoor, mounted to the siding, pointed at the bush. It was there to keep an eye on Lady, my dog, when I let her out back. The cardinal repurposed it.
+
+The Brown Thrasher came twice. The first time, it landed on the bush, looked around, and left. Reconnaissance. The second time, it landed on the rim of the nest, reached in with its beak, and left with an egg. The whole thing took about four seconds. I was inside the house, ten feet away, making coffee.
+
+I found the footage that evening. I watched it several times.
+
+Then I started writing code.
+
+The system was live within a few days. Almost immediately, it created a different kind of panic. The cardinal was not on the nest at night. The camera showed an empty cup, hour after hour, from dusk until morning. The eggs were sitting in the open air, uncovered, cooling. I was convinced they were done for.
+
+It took some reading to understand what was happening. Female cardinals lay one egg per day over three to four days. During the laying phase, they do not incubate. They visit the nest briefly to lay, then leave. Full incubation, the patient sitting that lasts eleven to thirteen days, only begins after the last egg is down. The cardinal was not neglecting her eggs. She was not finished laying them yet.
+
+The system did not know this. It fired absence alerts all night, every night, for the first four days. I had built a machine to protect eggs from a thrasher, and the first thing it did was convince me the mother had abandoned them.
+
+## What the system sees
+
+The camera takes a fresh photo every one to five minutes. Each image goes to Claude Sonnet 4.6, Anthropic's vision model, which returns a structured observation: is the cardinal present, are the eggs visible, is anything threatening near the nest.
+
+Most of the time, the answer is boring.
+
+### Mom is home
+
+![Female cardinal incubating on the nest](evidence/reference/cardinal_on_nest.jpg)
+
+*She's on the nest. The system notes this, confirms her presence, and checks back in five minutes. No alert. This is the good outcome, repeated two hundred times a day.*
+
+### Something is at the nest
+
+![Brown Thrasher near the cardinal nest](evidence/reference/historical_thrasher_1.jpg)
+
+*A thrasher. The system identifies it by the long tail, the streaked breast, the absence of a crest. It fires a HIGH alert to my phone immediately. Before the notification arrives, a second model, Claude Opus 4.6, reviews the same image cold, with no knowledge of the first model's verdict. If Opus disagrees, the alert is suppressed. If Opus agrees, it goes through. This one went through.*
+
+### Mom is gone
+
+![Empty nest with no bird present](evidence/reference/empty_nest.jpg)
+
+*The nest is empty. She left to forage, probably. The system tightens the snap cadence from every five minutes to every sixty seconds. This is the predation risk window. If a threat shows up during this window, the alert fires instantly. If nothing happens but she's still gone after five minutes, a MEDIUM alert lets me know.*
+
+## What happens when something goes wrong
+
+| Level | What the system saw | What I should do |
+|---|---|---|
+| **CRITICAL** | A predator's beak or body inside the nest cup | **The backyard is the production environment and you just got paged** |
+| **HIGH** | A thrasher, blue jay, or squirrel near the nest | Pull up the camera. Decide whether to go outside. |
+| **MEDIUM** | The cardinal has been gone for five minutes or more | Probably fine. Probably. The system is watching closer now. |
+| **LOW** | She came back | Stand down. |
+
+## How it works
+
+There are two services running on a computer that stays on all day. The first one does nothing but take photos and save them to disk. The second one does everything else: analyze the image, decide if it's a threat, check with a second model if it is, post to Discord, log the observation, update the state.
+
+They are separate on purpose. On April 15, 2026, a stuck API call froze the entire system for three hours during peak daylight. No photos, no alerts, nothing. The eggs were unmonitored while the sun was out and the thrashers were active. Splitting the services means the camera never stops taking pictures, even if the analysis side crashes, restarts, or runs out of credits. When the analyzer comes back, it works through whatever piled up while it was gone.
+
+```
+┌──────────────────────────┐          ┌──────────────────────────────┐
+│  DOWNLOADER              │          │  ANALYZER                    │
+│                          │          │                              │
+│  Blink camera            │  spool   │  Claude Sonnet 4.6           │
+│    snap every 1 to 5 min ├────────→ │    species ID + threat eval  │
+│    save to disk          │          │    Opus 4.6 verification     │
+│                          │          │    Discord alerts            │
+│  Never stops.            │          │    feed + analytics          │
+│  Not even during         │          │                              │
+│  code deploys.           │          │  Can restart without         │
+│                          │          │  losing a single snap.       │
+└──────────────────────────┘          └──────────────────────────────┘
+```
+
+The cadence adapts to the situation. When she's on the nest, a photo every five minutes is enough. When she's away foraging, the interval drops to sixty seconds. Overnight, when cardinals sleep on their eggs, it relaxes to every thirty minutes.
+
+### The night vision problem
+
+The camera switches to infrared after dark. The images turn grayscale. And in grayscale, the cardinal's brown plumage becomes indistinguishable from the nest straw. The AI kept reporting "nest empty" at moderate confidence because it genuinely could not tell the difference between a bird and the material she was sitting on.
+
+The result was ten to fifteen false "mom is gone" alerts every night. She was there the whole time, sleeping on her eggs, invisible to infrared.
+
+The fix had three parts. First, I added explicit IR guidance to the prompt: if the image is grayscale, default to "uncertain" rather than "absent," because you cannot reliably tell. Second, I suppressed the absence alerts entirely during quiet hours, because a cardinal leaving her nest at 2 AM to forage is not a real scenario. Third, I raised the confidence threshold for overnight state changes, so a low confidence "empty nest" reading from an IR image would not trigger the system to start snapping every sixty seconds and burning through camera battery for nothing.
+
+The predator alerts still fire overnight. A raccoon at the nest at 3 AM is a real threat and the system needs to catch it. But the "where is mom" logic learned to admit what it cannot see.
+
+### Two model verification
+
+Claude Sonnet 4.6 analyzes every snap. When it flags a CRITICAL or HIGH alert, the system runs a blind second opinion through Opus 4.6. Same image, same prompt, no hint of what Sonnet said. This is not confirmation bias; it is an independent evaluation. Opus can suppress, downgrade, or confirm.
+
+The female cardinal and the Brown Thrasher are both brownish birds. The analyzer prompt includes field marks: red crest means cardinal, never a threat; long tail plus streaked breast plus yellow eye means thrasher, always a threat; can't tell means unknown, which still fires an alert, because I would rather get woken up for nothing than miss the real thing.
+
+### Four Discord channels
+
+| Channel | Purpose |
+|---|---|
+| **#alerts** | CRITICAL, HIGH, MEDIUM, LOW. Actionable, live alerts only |
+| **#nest-feed** | Every snap with Claude's full analysis. Watch the AI reason in real time |
+| **#nest-analytics** | Behavior reports every 8 hours: foraging trips, threat counts, time on nest |
+| **#nest-backfill** | Alerts from analyzer downtime, tagged `[BACKFILL +Nm]`. Keeps #alerts clean |
+
+## By the numbers
+
+| | |
+|---|---|
+| Snaps per day | ~270 |
+| Monthly cost (Anthropic) | ~$90 |
+| Camera battery life | 10 to 14 days |
+| Tests in the suite | 85 |
+| Reaction time when she's away | Under a minute |
+| Reaction time when she's home | Under five minutes |
+| Models that know the cardinal exists | 2 |
+| Cardinals that know the models exist | 0 |
+
+## Setup
+
+### Prerequisites
+
+- macOS with Python 3.11+
+- [Blink Outdoor](https://blinkforhome.com/) camera pointed at the nest
+- [Anthropic API key](https://console.anthropic.com/) with Sonnet 4.6 + Opus 4.6 access
+- Discord server with webhook URLs for up to 4 channels
+
+### Install
+
+```bash
+git clone https://github.com/bali0019/birdnest-ai.git
+cd birdnest-ai
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -e ".[dev]"
+```
+
+### Configure
+
+```bash
+cp .env.example .env
+# Fill in: ANTHROPIC_API_KEY, DISCORD_WEBHOOK_URL, BLINK_USERNAME,
+# BLINK_PASSWORD, BLINK_CAMERA_NAME. Optional: feed, analytics,
+# and backfill webhook URLs.
+```
+
+### Blink authentication (one time)
+
+```bash
+python -m cardinal_nest_monitor --auth-only
+# Check email for the 2FA PIN, enter it when prompted.
+# Saves blink_credentials.json. No re-auth needed until token expires (~yearly).
+```
+
+### Deploy
+
+```bash
+mkdir -p ~/Library/Logs/cardinal-nest-monitor
+
+# Install and start both services
+cp launchd/com.cardinalnest.downloader.plist ~/Library/LaunchAgents/
+cp launchd/com.cardinalnest.analyzer.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.cardinalnest.downloader.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.cardinalnest.analyzer.plist
+
+# Verify both are running
+launchctl list | grep cardinalnest
+```
+
+### Run the tests
+
+```bash
+source venv/bin/activate
+TEST_MODE=true python -m pytest tests/ -v
+# 85 tests. All must pass before deploying any change.
+```
+
+## Tech stack
+
+Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.6 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. 85 tests in pytest, including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
+
+## Project structure
+
+```
+src/cardinal_nest_monitor/
+  analyzer.py          Sonnet 4.6 vision analysis with species ID prompt
+  verifier.py          Opus 4.6 blind second opinion on threats
+  events.py            Rules engine (severity levels, cooldowns, absence tracking)
+  state.py             SQLite state (observations, alerts, derived nest state)
+  notifier.py          Discord webhooks (4 channels, severity colored embeds)
+  spool.py             Atomic rename file queue between services
+  downloader_loop.py   Blink to spool producer
+  analyzer_loop.py     Spool to pipeline consumer
+  main.py              Pipeline wiring + watchdog + schedulers
+  analytics.py         Foraging trip detection + behavior reports
+  config.py            pydantic settings (.env)
+  schema.py            Pydantic models (NestObservation, Severity, AlertDecision)
+  blink_client.py      Blink camera connect, snap, motion
+  evidence.py          Per event evidence directory writer
+
+launchd/               macOS LaunchAgent plists
+tests/                 85 tests (unit + integration)
+evidence/reference/    Curated regression images for species ID validation
+```
+
+##
+
+The cardinal doesn't know about any of this. She just sits on her eggs.
+
+<p align="center">
+  <i>Built with <a href="https://claude.ai/code">Claude Code</a></i>
+</p>

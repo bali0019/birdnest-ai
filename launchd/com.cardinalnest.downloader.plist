@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cardinalnest.downloader</string>
+
+    <!-- Path to the Python interpreter inside the project venv. -->
+    <!-- Edit if your repo lives elsewhere. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/cardinal-nest-monitor/venv/bin/python</string>
+        <string>-m</string>
+        <string>cardinal_nest_monitor</string>
+        <string>--role=downloader</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/path/to/cardinal-nest-monitor</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart on crash, but back off so a crash-loop doesn't hammer Blink. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Logs go to ~/Library/Logs/cardinal-nest-monitor/ — rotated by macOS newsyslog. -->
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USERNAME/Library/Logs/cardinal-nest-monitor/downloader.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USERNAME/Library/Logs/cardinal-nest-monitor/downloader.err.log</string>
+
+    <!-- Inherit minimal env; .env is loaded by pydantic-settings at runtime. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+</dict>
+</plist>
