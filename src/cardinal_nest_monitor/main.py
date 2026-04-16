@@ -40,10 +40,8 @@ log = logging.getLogger(__name__)
 
 
 # ── Cost model (rough, per-call) ────────────────────────────────────────
-# Used only for the daily heartbeat estimate; not load-bearing.
-_HAIKU_COST_PER_CALL = 0.003
-_OPUS_COST_PER_CALL_CACHED = 0.04
-_OPUS_COST_PER_CALL_UNCACHED = 0.10
+# Single-tier Sonnet: ~$0.01 per snap. Used only for heartbeat estimate.
+_ANALYZER_COST_PER_CALL = 0.01
 
 
 class DailyCounters:
@@ -52,9 +50,8 @@ class DailyCounters:
     def __init__(self) -> None:
         self._day = datetime.now().date()
         self.events = 0
-        self.escalations = 0
+        self.analyzer_successes = 0
         self.alerts = 0
-        self.cost_usd = 0.0
 
     def _maybe_roll(self) -> None:
         today = datetime.now().date()
@@ -62,28 +59,26 @@ class DailyCounters:
             log.info("daily counters rolling over from %s to %s", self._day, today)
             self._day = today
             self.events = 0
-            self.escalations = 0
+            self.analyzer_successes = 0
             self.alerts = 0
-            self.cost_usd = 0.0
 
-    def record_snap(self, escalated: bool, opus_cache_warm: bool) -> None:
+    def record_snap(self, analyzed: bool = True) -> None:
         self._maybe_roll()
         self.events += 1
-        self.cost_usd += _HAIKU_COST_PER_CALL
-        if escalated:
-            self.escalations += 1
-            self.cost_usd += (
-                _OPUS_COST_PER_CALL_CACHED if opus_cache_warm
-                else _OPUS_COST_PER_CALL_UNCACHED
-            )
+        if analyzed:
+            self.analyzer_successes += 1
 
     def record_alert(self) -> None:
         self._maybe_roll()
         self.alerts += 1
 
     @property
-    def escalation_rate(self) -> float:
-        return self.escalations / self.events if self.events > 0 else 0.0
+    def analyzer_success_rate(self) -> float:
+        return self.analyzer_successes / self.events if self.events > 0 else 0.0
+
+    @property
+    def estimated_cost(self) -> float:
+        return self.analyzer_successes * _ANALYZER_COST_PER_CALL
 
 
 class Pipeline:
@@ -102,7 +97,6 @@ class Pipeline:
         self.evidence = evidence
         self.counters = counters
         self.feed_queue = feed_queue
-        self._last_opus_call_ts: float = 0.0  # for cache-warm heuristic
         # Watchdog input: the wall-clock ts of the most recent successful
         # state.record(). Initialised to startup time so the 15-min watchdog
         # doesn't fire the instant the service boots. Updated inside
@@ -132,14 +126,12 @@ class Pipeline:
         pre = None
 
         obs: NestObservation | None = None
-        cache_warm = (time.time() - self._last_opus_call_ts) < 270
         try:
             # Outer 60s timeout is belt-and-suspenders — analyzer.analyze()
             # already has an inner `asyncio.wait_for(..., 60)` around the
             # HTTP call, but this protects the caller from any future
             # unbounded awaits added to analyze() (e.g. a new retry loop).
             obs = await asyncio.wait_for(analyzer_mod.analyze(jpeg), timeout=60)
-            self._last_opus_call_ts = time.time()
         except asyncio.TimeoutError:
             log.warning(
                 "analyzer timed out after 60s; no observation for this snap",
@@ -226,7 +218,7 @@ class Pipeline:
         if state_updated is not None:
             state_updated.set()
         # In single-tier mode, every snap is "escalated" (analyzer always runs).
-        self.counters.record_snap(escalated=obs is not None, opus_cache_warm=cache_warm)
+        self.counters.record_snap(analyzed=obs is not None)
 
         # Send alert
         if decision is not None and obs is not None:
@@ -433,8 +425,8 @@ async def heartbeat_scheduler(notifier: Notifier, store: StateStore, counters: D
                 events_today=counters.events,
                 alerts_today=counters.alerts,
                 last_mother_seen_minutes_ago=mother_minutes_ago,
-                prefilter_escalation_rate=counters.escalation_rate,
-                cost_estimate_today_usd=counters.cost_usd,
+                analyzer_success_rate=counters.analyzer_success_rate,
+                cost_estimate_today_usd=counters.estimated_cost,
             )
         except Exception:
             log.exception("heartbeat send failed (non-fatal)")

@@ -1,7 +1,7 @@
-"""Tier-2 deep analysis using Claude Opus 4.6.
+"""Single-tier analyzer using Claude Sonnet 4.6 (configurable via ANALYZER_MODEL).
 
-Produces a structured NestObservation that drives the rules engine. Called only
-when the prefilter escalates (or when a motion event forces escalation).
+Produces a structured NestObservation that drives the rules engine. Every snap
+goes through this analyzer directly (no prefilter in current single-tier mode).
 """
 
 from __future__ import annotations

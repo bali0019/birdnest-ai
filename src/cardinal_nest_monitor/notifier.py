@@ -148,7 +148,7 @@ class Notifier:
                 "inline": True,
             },
             {
-                "name": "Tier 2 confidence",
+                "name": "Confidence",
                 "value": f"{decision.confidence:.0%}",
                 "inline": True,
             },
@@ -157,11 +157,11 @@ class Notifier:
                 "value": self.camera_name or "—",
                 "inline": True,
             },
-            # Tier 1 field only shown if the prefilter actually ran
+            # Prefilter field (legacy, only shown if prefilter ran — currently disabled)
             *(
                 [
                     {
-                        "name": f"Tier 1 ({settings.prefilter_model})",
+                        "name": f"Prefilter ({settings.prefilter_model})",
                         "value": _truncate(
                             f"`{prefilter.novel_activity}` — {prefilter.reason}",
                             _FIELD_VALUE_MAX,
@@ -173,11 +173,7 @@ class Notifier:
                 else []
             ),
             {
-                "name": (
-                    f"Tier 2 ({settings.analyzer_model})"
-                    if prefilter is not None
-                    else f"Analyzer ({settings.analyzer_model})"
-                ),
+                "name": f"Analyzer ({settings.analyzer_model})",
                 "value": _truncate(
                     f"confidence {observation.confidence:.0%} — {observation.summary}",
                     _FIELD_VALUE_MAX,
@@ -287,7 +283,7 @@ class Notifier:
         events_today: int,
         alerts_today: int,
         last_mother_seen_minutes_ago: int | None,
-        prefilter_escalation_rate: float,
+        analyzer_success_rate: float,
         cost_estimate_today_usd: float | None,
     ) -> bool:
         last_seen = (
@@ -305,8 +301,8 @@ class Notifier:
             {"name": "Alerts", "value": str(alerts_today), "inline": True},
             {"name": "Last mother seen", "value": last_seen, "inline": True},
             {
-                "name": "Prefilter escalation rate",
-                "value": f"{prefilter_escalation_rate:.0%}",
+                "name": "Analyzer success rate",
+                "value": f"{analyzer_success_rate:.0%}",
                 "inline": True,
             },
             {"name": "Est. spend today", "value": cost, "inline": True},
@@ -388,15 +384,15 @@ class Notifier:
 
         # Description: tier layout depends on whether prefilter ran.
         # Single-tier mode (no prefilter): just show the analyzer result.
-        # Two-tier mode (prefilter ran): show both Tier 1 and Tier 2.
+        # Prefilter mode (legacy, currently disabled):
         desc_parts: list[str] = []
         if prefilter_text is not None and prefilter_novel is not None:
             desc_parts.append(
-                f"**Tier 1 ({settings.prefilter_model})** — `{prefilter_novel}`: {prefilter_text}"
+                f"**Prefilter ({settings.prefilter_model})** — `{prefilter_novel}`: {prefilter_text}"
             )
             if observation_summary:
                 desc_parts.append(
-                    f"**Tier 2 ({settings.analyzer_model})** — {observation_summary}"
+                    f"**Analyzer ({settings.analyzer_model})** — {observation_summary}"
                 )
         else:
             # Single-tier: just the analyzer

@@ -1,6 +1,6 @@
 """Two-model verification for CRITICAL/HIGH alerts.
 
-When Sonnet (the Tier-1 analyzer) flags an alert at CRITICAL or HIGH severity,
+When Sonnet (the primary analyzer) flags an alert at CRITICAL or HIGH severity,
 we do a blind second-opinion call with Opus. Opus wins on disagreement:
   - Opus says "no threat" → SUPPRESS the Sonnet alert (false positive caught)
   - Opus says lower severity → DOWNGRADE
