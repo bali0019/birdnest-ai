@@ -77,12 +77,17 @@ def _cooldown_blocks(
     severity: Severity,
     species: str | None,
     window_s: int,
+    ts: float | None = None,
 ) -> bool:
     """True if a prior alert for `species` within `window_s` has severity
     >= the current severity. Lower prior severity allows the new higher-
     severity alert to break through.
+
+    When `ts` is provided, cooldown is computed relative to that timestamp
+    rather than wall clock. Critical for backfill processing where snaps
+    may be minutes/hours old.
     """
-    latest = store.latest_alert_for_species(species, window_s)
+    latest = store.latest_alert_for_species(species, window_s, ts=ts)
     if latest is None:
         return False
     prior_sev, _ = latest
@@ -110,7 +115,7 @@ def evaluate(
     # ── Rule 1: Direct attack (CRITICAL, 60s per species) ─────────────
     if observation.direct_nest_interaction:
         sev = Severity.CRITICAL
-        if not _cooldown_blocks(store, sev, primary_species, _CD_DIRECT_ATTACK):
+        if not _cooldown_blocks(store, sev, primary_species, _CD_DIRECT_ATTACK, ts):
             return AlertDecision(
                 severity=sev,
                 title="Direct nest interaction",
@@ -131,7 +136,7 @@ def evaluate(
         and observation.egg_count_estimate < state.last_known_egg_count
     ):
         sev = Severity.CRITICAL
-        if not _cooldown_blocks(store, sev, None, _CD_EGG_LOSS):
+        if not _cooldown_blocks(store, sev, None, _CD_EGG_LOSS, ts):
             return AlertDecision(
                 severity=sev,
                 title="Egg count dropped",
@@ -185,7 +190,7 @@ def evaluate(
 
     if threats and observation.near_nest_activity:
         sev = Severity.HIGH
-        if not _cooldown_blocks(store, sev, primary_species, _CD_PREDATOR_AT_NEST):
+        if not _cooldown_blocks(store, sev, primary_species, _CD_PREDATOR_AT_NEST, ts):
             return AlertDecision(
                 severity=sev,
                 title="Predator near nest",
@@ -211,7 +216,7 @@ def evaluate(
         and not get_settings().in_quiet_hours(datetime.fromtimestamp(ts).time())
     ):
         sev = Severity.MEDIUM
-        if not _cooldown_blocks(store, sev, None, _CD_LONG_ABSENCE):
+        if not _cooldown_blocks(store, sev, None, _CD_LONG_ABSENCE, ts):
             # Dynamic title: bucket the actual elapsed absence into multiples
             # of the threshold (currently 5 min). A 5m 9s absence reads
             # "5+ minutes", a 10m 32s absence reads "10+ minutes", etc. This
@@ -241,7 +246,7 @@ def evaluate(
         and state.in_absence
         and state.last_mother_seen_ts is not None
     ):
-        if not store.cooldown_active(Severity.LOW, None, _MOTHER_RETURN_COOLDOWN):
+        if not store.cooldown_active(Severity.LOW, None, _MOTHER_RETURN_COOLDOWN, ts=ts):
             sev = Severity.LOW
             return AlertDecision(
                 severity=sev,

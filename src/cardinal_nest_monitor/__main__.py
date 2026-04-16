@@ -37,7 +37,7 @@ def _split_role_arg(argv: list[str]) -> tuple[str, list[str]]:
     return ns.role, remaining
 
 
-def _entrypoint(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
@@ -78,4 +78,4 @@ def _entrypoint(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(_entrypoint())
+    sys.exit(main())

@@ -146,8 +146,9 @@ class StateStore:
             # During quiet hours, require higher confidence to flip in_absence.
             # IR night images produce unreliable 0.60-0.70 "empty nest" readings
             # that would wastefully tighten cadence to 1-min overnight.
+            from datetime import datetime as _dt
             _quiet_now = get_settings().in_quiet_hours(
-                __import__("datetime").datetime.now().time()
+                _dt.fromtimestamp(ts).time()
             )
             _conf_ok = not _quiet_now or observation.confidence >= 0.75
 
@@ -238,6 +239,7 @@ class StateStore:
         severity: Severity,
         species: str | None,
         window_s: int,
+        ts: float | None = None,
     ) -> bool:
         if species is None:
             cur = self._conn.execute(
@@ -261,12 +263,14 @@ class StateStore:
         row = cur.fetchone()
         if row is None or row["latest"] is None:
             return False
-        return (time.time() - float(row["latest"])) < window_s
+        ref = ts if ts is not None else time.time()
+        return (ref - float(row["latest"])) < window_s
 
     def latest_alert_for_species(
         self,
         species: str | None,
         window_s: int,
+        ts: float | None = None,
     ) -> tuple[Severity, float] | None:
         """Return (severity, ts) of the most recent alert for `species` within
         `window_s`, regardless of severity. Used for escalation breakthrough.
@@ -290,7 +294,8 @@ class StateStore:
         row = cur.fetchone()
         if row is None:
             return None
-        if (time.time() - float(row["ts"])) >= window_s:
+        ref = ts if ts is not None else time.time()
+        if (ref - float(row["ts"])) >= window_s:
             return None
         return Severity(row["severity"]), float(row["ts"])
 

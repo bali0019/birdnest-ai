@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # ── Anthropic ───────────────────────────────────────────────────────
     anthropic_api_key: str = Field("", description="sk-ant-...")
     prefilter_model: str = Field("claude-haiku-4-5-20251001")
-    analyzer_model: str = Field("claude-opus-4-6")
+    analyzer_model: str = Field("claude-sonnet-4-6")
     # Second-pass verification model. Re-analyzes the same image on
     # CRITICAL/HIGH alerts before firing (see verifier.py). Blind second
     # opinion reduces false CRITICALs from single-model misidentifications.
@@ -57,16 +57,14 @@ class Settings(BaseSettings):
     blink_creds_path: Path = Field(Path("./blink_credentials.json"))
 
     # ── Cadence ─────────────────────────────────────────────────────────
-    snap_interval_seconds: int = Field(30, ge=10, le=600)
+    snap_interval_seconds: int = Field(300, ge=10, le=600)
     motion_poll_seconds: int = Field(15, ge=10, le=120)
-    active_hours: str = Field("06:00-21:00")
+    active_hours: str = Field("00:00-23:59")
 
-    # Optional "quiet hours" override — during these hours, snap less frequently
-    # to save battery + Anthropic spend. Cardinals sleep on the nest at night,
-    # and motion events still trigger immediate snaps regardless of cadence.
-    # Empty string = disabled (use snap_interval_seconds 24/7 within active_hours).
-    quiet_hours: str = Field("")
-    quiet_snap_interval_seconds: int = Field(300, ge=30, le=3600)
+    # Quiet hours: snap less frequently to save battery + Anthropic spend.
+    # Cardinals sleep on the nest at night. Empty string = disabled.
+    quiet_hours: str = Field("23:00-05:00")
+    quiet_snap_interval_seconds: int = Field(1800, ge=30, le=3600)
 
     # Pattern A: cadence used when state.in_absence=True (mom is off the nest
     # ≥ 2 min). Peak predation risk window. Default 60s. Quiet hours override.
