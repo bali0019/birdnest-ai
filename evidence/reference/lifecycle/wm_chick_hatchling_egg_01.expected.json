@@ -1,0 +1,10 @@
+{
+  "stage": "hatchling",
+  "description": "Pink hatchling with one unhatched egg, in messy nest with plastic debris. Top-down angle.",
+  "cardinal_on_nest": "false",
+  "chicks_visible": "true",
+  "chick_count_estimate_min": 1,
+  "chick_count_estimate_max": 2,
+  "threat_species_detected_empty": true,
+  "confidence_min": 0.7
+}

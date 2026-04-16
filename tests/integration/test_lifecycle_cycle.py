@@ -1,0 +1,259 @@
+"""Integration tests for the lifecycle tracking feature.
+
+These simulate a full incubation → feeding → fledging lifecycle through
+the real Pipeline.on_image path, using curated reference JPEGs as the
+input bytes but mocking the analyzer to return observations that match
+each stage (so we don't burn Anthropic credits on every test run).
+
+The analyzer-prompt accuracy is separately validated by
+`tools/lifecycle_regression.py` which calls the real API.
+"""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from unittest.mock import AsyncMock
+
+import pytest
+
+from cardinal_nest_monitor import analyzer as analyzer_mod
+from cardinal_nest_monitor import main as main_mod
+from cardinal_nest_monitor.config import get_settings
+from cardinal_nest_monitor.schema import NestObservation, Severity
+
+
+_LIFECYCLE_DIR = (
+    Path(__file__).resolve().parents[2] / "evidence" / "reference" / "lifecycle"
+)
+
+
+def _pipeline(store, notifier, evidence):
+    counters = main_mod.DailyCounters()
+    return main_mod.Pipeline(
+        store=store,
+        notifier=notifier,
+        evidence=evidence,
+        counters=counters,
+        feed_queue=None,
+    )
+
+
+def _obs(**kwargs) -> NestObservation:
+    base = dict(
+        mother_cardinal_present="true",
+        cardinal_on_nest="true",
+        eggs_visible="false",
+        egg_count_estimate=None,
+        nest_visible=True,
+        nest_disturbed="false",
+        species_detected=["northern_cardinal"],
+        threat_species_detected=[],
+        near_nest_activity=False,
+        direct_nest_interaction=False,
+        chicks_visible="uncertain",
+        chick_count_estimate=None,
+        mother_feeding_chicks=False,
+        confidence=0.9,
+        summary="Mom on nest.",
+    )
+    base.update(kwargs)
+    return NestObservation(**base)
+
+
+@pytest.fixture
+def lifecycle_on(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "lifecycle_tracking_enabled", True)
+    # Disable verifier for simpler test paths
+    monkeypatch.setattr(settings, "verify_alerts_with_opus", False)
+
+
+# ── Regression guard: flag off is byte-identical ──────────────────────
+
+async def test_lifecycle_off_by_default_behaves_like_today(
+    monkeypatch, store, evidence, notifier, cardinal_jpeg_bytes, obs_on_nest,
+):
+    """With lifecycle_tracking_enabled=False (default), Pipeline.on_image
+    behavior is identical to today — no lifecycle transitions, no hatch
+    or fledge alerts."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "lifecycle_tracking_enabled", False)
+
+    send_alert_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(notifier, "send_alert", send_alert_mock)
+
+    # Even if the analyzer returned chicks_visible=true, no transition.
+    analyze_mock = AsyncMock(return_value=_obs(
+        cardinal_on_nest="false",
+        chicks_visible="true",
+        chick_count_estimate=2,
+    ))
+    monkeypatch.setattr(analyzer_mod, "analyze", analyze_mock)
+
+    pipeline = _pipeline(store, notifier, evidence)
+    await pipeline.on_image(
+        cardinal_jpeg_bytes,
+        {"motion_triggered": False, "ts": time.time()},
+    )
+
+    final_state = store.get_state()
+    assert final_state.lifecycle_stage == "incubation"
+    assert final_state.hatch_detected_ts is None
+
+
+# ── Hatch alert end-to-end ────────────────────────────────────────────
+
+async def test_hatch_alert_fires_through_pipeline(
+    monkeypatch, store, evidence, notifier, lifecycle_on,
+):
+    """When the mocked analyzer reports chicks_visible=true for the first
+    time, Pipeline.on_image fires a LOW hatch alert via send_alert."""
+    # Need a real JPEG for the pipeline to process.
+    # Use a smaller image (< 8MB) to stay under Discord's attachment limit.
+    chick_jpeg = (_LIFECYCLE_DIR / "wm_chick_hatchling_01.jpg").read_bytes()
+
+    # Seed incubation state first
+    t0 = time.time() - 3600
+    store.record(t0, False, None, _obs(), None)
+
+    # Capture send_alert calls
+    captured = []
+    orig = notifier.send_alert
+
+    async def _capture(decision, observation, **kwargs):
+        captured.append(decision)
+        return await orig(decision, observation, **kwargs)
+
+    monkeypatch.setattr(notifier, "send_alert", _capture)
+
+    # Mock analyzer to return chicks_visible=true
+    analyze_mock = AsyncMock(return_value=_obs(
+        cardinal_on_nest="false",
+        mother_cardinal_present="false",
+        chicks_visible="true",
+        chick_count_estimate=3,
+        summary="Three chicks begging in nest.",
+    ))
+    monkeypatch.setattr(analyzer_mod, "analyze", analyze_mock)
+
+    pipeline = _pipeline(store, notifier, evidence)
+    await pipeline.on_image(
+        chick_jpeg,
+        {"motion_triggered": False, "ts": time.time()},
+    )
+
+    # A hatch alert must have fired.
+    hatch_alerts = [d for d in captured if d.rule_id == "hatch"]
+    assert len(hatch_alerts) == 1, (
+        f"expected one hatch alert, got {len(captured)} total: "
+        f"{[d.rule_id for d in captured]}"
+    )
+    assert hatch_alerts[0].severity == Severity.LOW
+    assert "🐣" in hatch_alerts[0].title
+
+    # State should be in feeding now
+    assert store.get_state().lifecycle_stage == "feeding"
+
+
+# ── Feeding stage suppresses MEDIUM absence spam ──────────────────────
+
+async def test_feeding_stage_suppresses_medium_absence_alerts(
+    monkeypatch, store, evidence, notifier, lifecycle_on,
+    empty_nest_jpeg_bytes,
+):
+    """Once in feeding stage, a recent feeding event should suppress
+    MEDIUM long_absence alerts (she's expected to be away feeding)."""
+    # Seed feeding stage with a feeding event at t0
+    t0 = time.time() - 7200
+    from cardinal_nest_monitor.state import StateStore
+    store.record(t0, False, None, _obs(
+        cardinal_on_nest="true",
+        mother_feeding_chicks=True,
+        chicks_visible="true",
+        chick_count_estimate=2,
+    ), None)
+
+    assert store.get_state().lifecycle_stage == "feeding"
+    assert store.get_state().last_feeding_event_ts == pytest.approx(t0, abs=1.0)
+
+    # 10 min later (past 5 min MEDIUM threshold but within 30 min feeding
+    # suppression window)
+    captured = []
+    orig = notifier.send_alert
+
+    async def _capture(decision, observation, **kwargs):
+        captured.append(decision)
+        return await orig(decision, observation, **kwargs)
+
+    monkeypatch.setattr(notifier, "send_alert", _capture)
+
+    # Mock analyzer to say mom is gone again (another foraging trip)
+    analyze_mock = AsyncMock(return_value=_obs(
+        cardinal_on_nest="false",
+        mother_cardinal_present="false",
+        chicks_visible="uncertain",
+        species_detected=[],
+    ))
+    monkeypatch.setattr(analyzer_mod, "analyze", analyze_mock)
+
+    # Process a snap 10 min after the feeding event
+    t1 = t0 + 600
+    pipeline = _pipeline(store, notifier, evidence)
+    await pipeline.on_image(
+        empty_nest_jpeg_bytes,
+        {"motion_triggered": False, "ts": t1},
+    )
+
+    # No MEDIUM long_absence alert should have fired
+    medium_alerts = [
+        d for d in captured if d.severity == Severity.MEDIUM and d.rule_id == "long_absence"
+    ]
+    assert len(medium_alerts) == 0, (
+        f"expected no MEDIUM alerts during feeding suppression window, "
+        f"got {len(medium_alerts)}: {[d.rule_id for d in medium_alerts]}"
+    )
+
+
+# ── Predation during feeding stage still fires CRITICAL ───────────────
+
+async def test_predation_during_feeding_stage_still_critical(
+    monkeypatch, store, evidence, notifier, lifecycle_on,
+    thrasher_jpeg_bytes, obs_thrasher_direct_interaction,
+):
+    """A thrasher reaching into the nest during the feeding stage must
+    still fire CRITICAL. Feeding-stage rules don't protect chicks from
+    predators."""
+    # Seed feeding stage
+    t0 = time.time() - 3600
+    store.record(t0, False, None, _obs(
+        cardinal_on_nest="false",
+        chicks_visible="true",
+        chick_count_estimate=2,
+    ), None)
+    assert store.get_state().lifecycle_stage == "feeding"
+
+    captured = []
+    orig = notifier.send_alert
+
+    async def _capture(decision, observation, **kwargs):
+        captured.append(decision)
+        return await orig(decision, observation, **kwargs)
+
+    monkeypatch.setattr(notifier, "send_alert", _capture)
+
+    # Thrasher with beak in the cup
+    analyze_mock = AsyncMock(return_value=obs_thrasher_direct_interaction())
+    monkeypatch.setattr(analyzer_mod, "analyze", analyze_mock)
+
+    pipeline = _pipeline(store, notifier, evidence)
+    await pipeline.on_image(
+        thrasher_jpeg_bytes,
+        {"motion_triggered": False, "ts": time.time()},
+    )
+
+    critical_alerts = [d for d in captured if d.severity == Severity.CRITICAL]
+    assert len(critical_alerts) == 1, (
+        f"expected one CRITICAL alert, got {len(captured)} total"
+    )
+    assert critical_alerts[0].rule_id == "direct_attack"

@@ -1,0 +1,10 @@
+{
+  "stage": "chicks_begging",
+  "description": "Two cardinal nestlings with red gape mouths wide open (begging for food). Classic 'chicks visible' signal.",
+  "cardinal_on_nest": "false",
+  "chicks_visible": "true",
+  "chick_count_estimate_min": 2,
+  "chick_count_estimate_max": 3,
+  "threat_species_detected_empty": true,
+  "confidence_min": 0.8
+}

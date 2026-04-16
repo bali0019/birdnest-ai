@@ -94,12 +94,103 @@ def _cooldown_blocks(
     return prior_sev.rank >= severity.rank
 
 
+def _lifecycle_event(
+    observation: NestObservation,
+    state: NestState,
+    store: StateStore,
+    ts: float,
+) -> AlertDecision | None:
+    """Check for one-time lifecycle transition events (hatch / fledge).
+
+    Called with the PRE-record state. Predicts whether a transition WOULD
+    happen given this observation, and fires the corresponding LOW-severity
+    event if so. Mirrors the transition logic in state.py::record() — both
+    must stay in sync.
+
+    Why not check post-record state: Pipeline.on_image calls evaluate()
+    with pre_state BEFORE store.record() runs, so we can't see the flipped
+    stage. This predictive approach is safe because the 24h cooldown on
+    each rule_id prevents duplicate firings.
+    """
+    if not get_settings().lifecycle_tracking_enabled:
+        return None
+    if observation.confidence < _MIN_CONFIDENCE:
+        return None
+
+    # Hatch: predict incubation → feeding
+    # Trigger: chicks_visible="true" OR mother_feeding_chicks=true while
+    # currently in incubation.
+    if state.lifecycle_stage == "incubation" and (
+        observation.chicks_visible == "true"
+        or observation.mother_feeding_chicks
+    ):
+        sev = Severity.LOW
+        if not _cooldown_blocks(store, sev, "hatch", 24 * 3600, ts):
+            return AlertDecision(
+                severity=sev,
+                title="🐣 Chicks hatched!",
+                summary="First confirmed chick observation. Feeding stage begins.",
+                species=[],
+                mother_present=observation.mother_cardinal_present,
+                confidence=observation.confidence,
+                rule_id="hatch",
+            )
+
+    # Fledge: predict feeding → fledging
+    # Trigger: no cardinal visits in 12+ hours AND no threat in 48h AND
+    # chicks previously confirmed (hatch_detected_ts set).
+    if (
+        state.lifecycle_stage == "feeding"
+        and state.last_mother_seen_ts is not None
+        and (ts - state.last_mother_seen_ts) >= 12 * 3600
+        and (
+            state.last_threat_seen_ts is None
+            or (ts - state.last_threat_seen_ts) >= 48 * 3600
+        )
+        and state.hatch_detected_ts is not None
+        and observation.cardinal_on_nest != "true"  # confirm cardinal is absent NOW
+    ):
+        sev = Severity.LOW
+        if not _cooldown_blocks(store, sev, "fledge", 24 * 3600, ts):
+            return AlertDecision(
+                severity=sev,
+                title="🦅 Chicks fledged!",
+                summary="No cardinal visits for 12+ hours after chick presence confirmed. Chicks have left the nest.",
+                species=[],
+                mother_present=observation.mother_cardinal_present,
+                confidence=observation.confidence,
+                rule_id="fledge",
+            )
+    return None
+
+
+def _feeding_suppresses_medium(state: NestState, ts: float) -> bool:
+    """During the feeding stage, a recent feeding event suppresses MEDIUM
+    long_absence alerts for 30 minutes. Feeding trips cluster: mom leaves,
+    catches food, returns, leaves again. The 5-min MEDIUM threshold was
+    designed for incubation (where absences mean something went wrong) and
+    produces spam during feeding.
+    """
+    if not get_settings().lifecycle_tracking_enabled:
+        return False
+    if state.lifecycle_stage != "feeding":
+        return False
+    if state.last_feeding_event_ts is None:
+        return False
+    return (ts - state.last_feeding_event_ts) < 30 * 60
+
+
 def evaluate(
     observation: NestObservation,
     state: NestState,
     store: StateStore,
     ts: float,
 ) -> AlertDecision | None:
+    # ── Lifecycle event (fires BEFORE universal gates; always safe) ────
+    lifecycle_alert = _lifecycle_event(observation, state, store, ts)
+    if lifecycle_alert is not None:
+        return lifecycle_alert
+
     # ── Universal gates ────────────────────────────────────────────────
     if observation.confidence < _MIN_CONFIDENCE:
         log.debug("low confidence %.2f → no alert", observation.confidence)
@@ -208,12 +299,15 @@ def evaluate(
     # readings because the cardinal's plumage blends with nest material in
     # grayscale. She's almost certainly sleeping on the eggs. HIGH/CRITICAL
     # (predator rules) remain active overnight for nocturnal threats.
+    # Also suppressed during the feeding stage if a feeding event occurred
+    # recently — mom is expected to be away feeding chicks, not a crisis.
     if (
         absence is not None
         and absence >= _LONG_ABSENCE_THRESHOLD
         and not threats
         and observation.cardinal_on_nest != "true"
         and not get_settings().in_quiet_hours(datetime.fromtimestamp(ts).time())
+        and not _feeding_suppresses_medium(state, ts)
     ):
         sev = Severity.MEDIUM
         if not _cooldown_blocks(store, sev, None, _CD_LONG_ABSENCE, ts):

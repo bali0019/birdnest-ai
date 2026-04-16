@@ -133,6 +133,16 @@ class NestObservation(BaseModel):
     near_nest_activity: bool
     direct_nest_interaction: bool
 
+    # Lifecycle fields (added 2026-04-16, feature-flag gated).
+    # When lifecycle_tracking_enabled=False (default), these remain at their
+    # safe defaults and don't affect any existing code path.
+    chicks_visible: Tristate = "uncertain"
+    chick_count_estimate: int | None = Field(
+        None, ge=0, le=8,
+        description="Chicks visible above cup rim. null when chicks_visible != 'true'.",
+    )
+    mother_feeding_chicks: bool = False
+
     confidence: float = Field(..., ge=0.0, le=1.0)
     summary: str = Field(..., description="Short human-readable explanation.")
 
@@ -178,6 +188,9 @@ NEST_TOOL: dict[str, Any] = {
             "threat_species_detected",
             "near_nest_activity",
             "direct_nest_interaction",
+            "chicks_visible",
+            "chick_count_estimate",
+            "mother_feeding_chicks",
             "confidence",
             "summary",
         ],
@@ -261,6 +274,34 @@ NEST_TOOL: dict[str, Any] = {
                     "from the nest cup? This is the highest-severity signal."
                 ),
             },
+            "chicks_visible": {
+                "type": "string",
+                "enum": ["true", "false", "uncertain"],
+                "description": (
+                    "Are cardinal chicks/nestlings visible in the nest? True if you see "
+                    "pink or feathered nestlings (heads/beaks protruding above the cup "
+                    "rim, open mouths, or lying in the cup). Uncertain on IR/obscured "
+                    "images. Default 'uncertain' if unsure."
+                ),
+            },
+            "chick_count_estimate": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "maximum": 8,
+                "description": (
+                    "Estimated number of chicks visible (best-effort count). null if "
+                    "chicks_visible is 'false' or 'uncertain'."
+                ),
+            },
+            "mother_feeding_chicks": {
+                "type": "boolean",
+                "description": (
+                    "True when the cardinal is at the nest with a food item visible "
+                    "in her beak (insect, caterpillar, berry, or a bulge suggesting food). "
+                    "False if the cardinal is present without visible food, or if no "
+                    "cardinal is present."
+                ),
+            },
             "confidence": {
                 "type": "number",
                 "minimum": 0.0,
@@ -311,6 +352,15 @@ class NestState(BaseModel):
     # are peak predation risk and use burst_snap_interval_seconds. None when
     # not in absence.
     absence_started_ts: float | None = None
+
+    # Lifecycle tracking (2026-04-16, feature-flag gated). When
+    # lifecycle_tracking_enabled=False these stay at defaults and are ignored
+    # by the events engine.
+    lifecycle_stage: Literal["incubation", "feeding", "fledging", "empty"] = "incubation"
+    last_chick_count: int | None = None
+    hatch_detected_ts: float | None = None  # set when first chick observed
+    fledge_detected_ts: float | None = None  # set on fledge transition
+    last_feeding_event_ts: float | None = None  # set on mother_feeding_chicks=true
 
     def absence_seconds(self, now_ts: float) -> int | None:
         if self.last_mother_seen_ts is None:

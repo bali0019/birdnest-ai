@@ -1,0 +1,10 @@
+{
+  "stage": "chicks_in_nest",
+  "description": "Single week-old chick with pin feathers, open beak with yellow gape.",
+  "cardinal_on_nest": "false",
+  "chicks_visible": "true",
+  "chick_count_estimate_min": 1,
+  "chick_count_estimate_max": 2,
+  "threat_species_detected_empty": true,
+  "confidence_min": 0.8
+}

@@ -94,6 +94,50 @@ Blink IR images are GRAYSCALE with a slight purple/green cast. Key properties:
 - Confidence on IR images should be 0.40-0.55 (below the action threshold) unless you can clearly distinguish a specific bird species by shape/posture.
 - A dark mass filling the nest cup in IR is LIKELY the cardinal — do not call it empty.
 
+== CHICKS vs EGGS — lifecycle awareness ==
+
+Cardinal eggs hatch around 11-13 days into incubation. After hatching the nest contains CHICKS (nestlings), not eggs. Chicks look very different from eggs:
+
+Newly hatched (day 0-3):
+  • PINK or RED skin, mostly naked with sparse gray/white down
+  • Eyes closed, heads larger than bodies
+  • Visible movement (chicks wriggle; eggs don't)
+  • Often lying curled in the nest cup
+
+Older nestlings (day 4-10):
+  • Pin feathers emerging (dark quills/spikes on back and wings)
+  • Eyes may open around day 5
+  • Larger, more bird-shaped
+  • HEADS AND BEAKS often STRETCH UP above the cup rim when a parent arrives, with BRIGHT RED-ORANGE or YELLOW GAPE (inside of mouth) visible
+  • May be multiple chicks visible at once
+
+If you see pink/red flesh, sparse down, multiple small bodies, or small heads with gaping mouths protruding from the cup:
+  • chicks_visible = "true"
+  • chick_count_estimate = your best count (may be occluded by mom or foliage)
+
+If you see ONLY a clear, smooth cup interior with NO pink bodies, NO beaks, NO movement:
+  • chicks_visible = "false"
+
+If the image is too obscured to tell (IR, heavy foliage, mom covering everything):
+  • chicks_visible = "uncertain"
+
+== Feeding behavior ==
+
+Set mother_feeding_chicks = true ONLY when you can clearly identify a food item that is EXTERNALLY VISIBLE and protruding from the beak:
+  • A caterpillar, worm, or insect sticking out (legs, body, or wings visible)
+  • A berry or seed visibly held between the mandibles and protruding
+  • A clearly-shaped prey item hanging from the beak
+
+Set mother_feeding_chicks = false in ALL other cases:
+  • Beak closed → false
+  • Beak open showing pink/orange INSIDE the mouth (this is normal — it is not food) → false
+  • Beak appears to have a "bulge" but no identifiable shape → false
+  • No cardinal present → false
+
+Be CONSERVATIVE. The default is false. Only report true when there is unambiguous visual evidence of food held in the beak.
+
+Feeding trips are short (30-120 seconds at the nest) and frequent (every 10-30 min during the feeding stage). Brief absences after hatching are expected and normal, not alarming.
+
 == User's risk posture ==
 The user prefers FALSE ALARMS over MISSED THREATS. Decision rules:
   - Bird at nest + red crest clearly visible → female cardinal, NOT a threat, no species in threat_species_detected.

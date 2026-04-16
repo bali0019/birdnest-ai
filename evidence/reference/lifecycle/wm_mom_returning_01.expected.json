@@ -1,0 +1,9 @@
+{
+  "stage": "incubation",
+  "description": "Female cardinal on nest with head tilted down \u2014 could be feeding motion or egg adjustment.",
+  "cardinal_on_nest": "true",
+  "chicks_visible": "uncertain",
+  "threat_species_detected_empty": true,
+  "confidence_min": 0.7,
+  "_note": "Mom is on nest covering the cup \u2014 chicks_visible must be 'uncertain' (we can't see what's underneath her)"
+}

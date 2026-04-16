@@ -1,0 +1,8 @@
+{
+  "stage": "feeding_or_incubation_ambiguous",
+  "description": "Female cardinal on nest in Spanish moss. Analyzer consistently sees food item protruding from her beak at 92% confidence. Reclassified as feeding image rather than pure incubation.",
+  "cardinal_on_nest": "true",
+  "threat_species_detected_empty": true,
+  "confidence_min": 0.8,
+  "_note": "Originally classified as incubation but analyzer sees food in beak. Accepting either interpretation \u2014 checks are limited to unambiguous fields (cardinal present, no threat, high confidence)."
+}

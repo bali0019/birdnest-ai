@@ -51,7 +51,12 @@ CREATE TABLE IF NOT EXISTS state (
   last_alert_severity TEXT,
   last_absence_alert_ts REAL,
   in_absence INTEGER NOT NULL DEFAULT 0,
-  absence_started_ts REAL
+  absence_started_ts REAL,
+  lifecycle_stage TEXT NOT NULL DEFAULT 'incubation',
+  last_chick_count INTEGER,
+  hatch_detected_ts REAL,
+  fledge_detected_ts REAL,
+  last_feeding_event_ts REAL
 );
 INSERT OR IGNORE INTO state (id) VALUES (1);
 
@@ -105,18 +110,28 @@ class StateStore:
         self._conn.execute("PRAGMA synchronous=NORMAL")  # WAL-safe balanced durability
         self._conn.executescript(_SCHEMA_SQL)
 
-        # Idempotent migration: add absence_started_ts for burst cadence
-        # (2026-04-16). Existing DBs created before this column existed need
-        # the column added in-place. ALTER TABLE throws "duplicate column"
-        # when the column already exists — catch and swallow that so the
-        # migration is safe to run on every startup.
-        try:
-            self._conn.execute(
-                "ALTER TABLE state ADD COLUMN absence_started_ts REAL"
-            )
-        except sqlite3.OperationalError as e:
-            if "duplicate column" not in str(e).lower():
-                raise
+        # Idempotent migration: add columns for features added after the
+        # initial schema shipped. Existing DBs created before these columns
+        # existed need them added in-place. ALTER TABLE throws "duplicate
+        # column" when the column already exists — catch and swallow that
+        # so migrations are safe to run on every startup.
+        _migrations = [
+            # Burst cadence (2026-04-16)
+            "ALTER TABLE state ADD COLUMN absence_started_ts REAL",
+            # Lifecycle tracking (2026-04-16)
+            "ALTER TABLE state ADD COLUMN lifecycle_stage TEXT NOT NULL DEFAULT 'incubation'",
+            "ALTER TABLE state ADD COLUMN last_chick_count INTEGER",
+            "ALTER TABLE state ADD COLUMN hatch_detected_ts REAL",
+            "ALTER TABLE state ADD COLUMN fledge_detected_ts REAL",
+            "ALTER TABLE state ADD COLUMN last_feeding_event_ts REAL",
+        ]
+        for sql in _migrations:
+            try:
+                self._conn.execute(sql)
+            except sqlite3.OperationalError as e:
+                msg = str(e).lower()
+                if "duplicate column" not in msg and "already exists" not in msg:
+                    raise
 
     # ── State row helpers ──────────────────────────────────────────────
     def _load_row(self) -> sqlite3.Row:
@@ -127,13 +142,19 @@ class StateStore:
 
     def _row_to_state(self, row: sqlite3.Row) -> NestState:
         sev = row["last_alert_severity"]
-        # absence_started_ts is fetched via keys() check to stay defensive if
-        # the column is ever renamed. After the idempotent migration at boot,
-        # this key always exists.
-        try:
-            absence_started_ts = row["absence_started_ts"]
-        except (IndexError, KeyError):
-            absence_started_ts = None
+        # Defensive column access — handles both the current schema and
+        # older DBs that might be mid-migration.
+        def _opt(col: str, default=None):
+            try:
+                return row[col]
+            except (IndexError, KeyError):
+                return default
+        absence_started_ts = _opt("absence_started_ts")
+        lifecycle_stage = _opt("lifecycle_stage", "incubation") or "incubation"
+        last_chick_count = _opt("last_chick_count")
+        hatch_detected_ts = _opt("hatch_detected_ts")
+        fledge_detected_ts = _opt("fledge_detected_ts")
+        last_feeding_event_ts = _opt("last_feeding_event_ts")
         return NestState(
             last_mother_seen_ts=row["last_mother_seen_ts"],
             last_known_egg_count=row["last_known_egg_count"],
@@ -142,6 +163,11 @@ class StateStore:
             last_alert_severity=Severity(sev) if sev else None,
             last_absence_alert_ts=row["last_absence_alert_ts"],
             in_absence=bool(row["in_absence"]),
+            lifecycle_stage=lifecycle_stage,
+            last_chick_count=last_chick_count,
+            hatch_detected_ts=hatch_detected_ts,
+            fledge_detected_ts=fledge_detected_ts,
+            last_feeding_event_ts=last_feeding_event_ts,
             absence_started_ts=absence_started_ts,
         )
 
@@ -164,10 +190,20 @@ class StateStore:
         last_threat_species = row["last_threat_species"]
         in_absence = bool(row["in_absence"])
         prev_in_absence = in_absence
-        try:
-            absence_started_ts = row["absence_started_ts"]
-        except (IndexError, KeyError):
-            absence_started_ts = None
+
+        def _opt(col: str, default=None):
+            try:
+                return row[col]
+            except (IndexError, KeyError):
+                return default
+
+        absence_started_ts = _opt("absence_started_ts")
+        lifecycle_stage = _opt("lifecycle_stage", "incubation") or "incubation"
+        prev_lifecycle_stage = lifecycle_stage
+        last_chick_count = _opt("last_chick_count")
+        hatch_detected_ts = _opt("hatch_detected_ts")
+        fledge_detected_ts = _opt("fledge_detected_ts")
+        last_feeding_event_ts = _opt("last_feeding_event_ts")
 
         if observation is not None and observation.confidence >= _MIN_CONFIDENCE:
             # During quiet hours, require higher confidence to flip in_absence.
@@ -208,6 +244,64 @@ class StateStore:
             absence_started_ts = None
         # else: no change, absence_started_ts stays whatever it was on load.
 
+        # ── Lifecycle stage transitions (flag-gated) ──────────────────────
+        # When lifecycle_tracking_enabled is False (default), these
+        # transitions are dormant — lifecycle_stage stays at "incubation"
+        # forever, and no chick/feeding state is recorded. That keeps the
+        # existing production behavior byte-identical until the flag flips.
+        if (
+            get_settings().lifecycle_tracking_enabled
+            and observation is not None
+            and observation.confidence >= _MIN_CONFIDENCE
+        ):
+            # Update chick count when chicks are confidently visible.
+            if observation.chicks_visible == "true" and observation.chick_count_estimate is not None:
+                last_chick_count = int(observation.chick_count_estimate)
+
+            # Feeding event — latest timestamp. Used downstream to suppress
+            # MEDIUM long-absence alerts for a cooldown window.
+            if observation.mother_feeding_chicks:
+                last_feeding_event_ts = ts
+
+            # Transition: incubation → feeding
+            # Trigger: chicks_visible="true" observed OR mother_feeding_chicks=true
+            # (both signals are independently sufficient — either proves chicks exist).
+            if lifecycle_stage == "incubation" and (
+                observation.chicks_visible == "true"
+                or observation.mother_feeding_chicks
+            ):
+                lifecycle_stage = "feeding"
+                if hatch_detected_ts is None:
+                    hatch_detected_ts = ts
+
+            # Transition: feeding → fledging
+            # Trigger: no cardinal visits for ≥12 hours AND no threat event
+            # in prior 48 hours AND chicks were previously confirmed.
+            # We check this by comparing ts against last_mother_seen_ts and
+            # last_threat_seen_ts.
+            if (
+                lifecycle_stage == "feeding"
+                and last_mother_seen_ts is not None
+                and (ts - last_mother_seen_ts) >= 12 * 3600
+                and (
+                    last_threat_seen_ts is None
+                    or (ts - last_threat_seen_ts) >= 48 * 3600
+                )
+                and hatch_detected_ts is not None
+            ):
+                lifecycle_stage = "fledging"
+                if fledge_detected_ts is None:
+                    fledge_detected_ts = ts
+
+            # Transition: fledging → empty
+            # Trigger: fledging state + 72 hours of no activity.
+            if (
+                lifecycle_stage == "fledging"
+                and fledge_detected_ts is not None
+                and (ts - fledge_detected_ts) >= 72 * 3600
+            ):
+                lifecycle_stage = "empty"
+
         self._conn.execute(
             "INSERT INTO observations (ts, motion_triggered, prefilter_json, observation_json, evidence_dir) "
             "VALUES (?, ?, ?, ?, ?)",
@@ -226,7 +320,12 @@ class StateStore:
             " last_threat_seen_ts = ?, "
             " last_threat_species = ?, "
             " in_absence = ?, "
-            " absence_started_ts = ? "
+            " absence_started_ts = ?, "
+            " lifecycle_stage = ?, "
+            " last_chick_count = ?, "
+            " hatch_detected_ts = ?, "
+            " fledge_detected_ts = ?, "
+            " last_feeding_event_ts = ? "
             "WHERE id = 1",
             (
                 last_mother_seen_ts,
@@ -235,6 +334,11 @@ class StateStore:
                 last_threat_species,
                 1 if in_absence else 0,
                 absence_started_ts,
+                lifecycle_stage,
+                last_chick_count,
+                hatch_detected_ts,
+                fledge_detected_ts,
+                last_feeding_event_ts,
             ),
         )
         return self._row_to_state(self._load_row())

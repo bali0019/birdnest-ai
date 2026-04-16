@@ -118,7 +118,7 @@ data/state.sqlite                             gitignored. Runtime state (observa
 data/spool/                                   gitignored. Atomic-rename spool for downloader→analyzer handoff. See §20.
 evidence/YYYY-MM-DD/                          gitignored. One directory per snap.
 evidence/reference/                           NOT gitignored (intentionally). Hand-curated regression test images for prompt changes — see Hard-won knowledge §15.
-tests/                                        pytest. Run with `python -m pytest tests/`. 74 unit + 27 integration = 101 tests (including spool + backfill guards), all should pass.
+tests/                                        pytest. Run with `python -m pytest tests/`. 89 unit + 31 integration = 120 tests (including spool + backfill guards), all should pass.
 ```
 
 ---
@@ -563,6 +563,68 @@ Anthropic supports multi-image requests natively. The three crops let the model 
 
 **Opus 4.7 as verifier**: upgraded from 4.6 to 4.7 same day. Better vision, new high-resolution image support. Especially helpful on the detail-heavy center-crop variant.
 
+### 23. Lifecycle tracking (2026-04-16, feature-flag gated, NOT yet deployed)
+
+Automatic detection of egg hatch → feeding → fledge transitions. The problem it solves: without this, the system keeps reporting "cardinal not on nest" as absence alarms when mom is actually off foraging for chicks. Cardinals start feeding chicks within hours of hatch and the absence pattern changes completely.
+
+**Gated by `LIFECYCLE_TRACKING_ENABLED` in `.env`. Default False. Leave off until regression passes.**
+
+**Detection approach — camera angle constrained:**
+
+The Blink Outdoor camera is mounted on siding pointing at the rose bush at eye-level. It sees the mother's back/side when she's on the nest. It does NOT see inside the cup directly. So:
+
+- We cannot detect hatch at the moment it happens (eggs are under mom)
+- We detect hatch when chicks first stretch up above the cup rim for food (day 1-3 post-hatch)
+- Feeding is detected when the cardinal is at the nest with a visible food item in her beak
+- Fledge is detected by absence: no cardinal visits for 12+ hours after chicks confirmed, with no threat event in the prior 48 hours
+
+**State machine (auto-transitions in `state.py::record()`):**
+
+```
+incubation → feeding: chicks_visible="true" OR mother_feeding_chicks=true
+feeding → fledging:   12+ hours with no cardinal visits AND no threat in 48h
+fledging → empty:     72 hours of no activity
+```
+
+All transitions are one-way. Once we're past incubation, we don't go back.
+
+**Events fired:**
+
+- 🐣 `hatch` (LOW alert, green) — first confirmed chick observation
+- 🦅 `fledge` (LOW alert, green) — chicks have left
+- MEDIUM long_absence is suppressed for 30 min after any feeding event (mom is expected to cluster feeding trips)
+
+**Schema additions:**
+
+- `NestObservation.chicks_visible` (Tristate), `chick_count_estimate` (int|None), `mother_feeding_chicks` (bool) — new fields returned by the analyzer
+- `NestState.lifecycle_stage` (str), `last_chick_count`, `hatch_detected_ts`, `fledge_detected_ts`, `last_feeding_event_ts` — new tracked columns
+- Idempotent SQLite `ALTER TABLE` migration runs on every startup
+
+**Analyzer prompt extension:** new sections "CHICKS vs EGGS" and "Feeding behavior" teach Sonnet to distinguish chicks from eggs, recognize food in the beak, and use `chicks_visible="uncertain"` when mom is covering the cup.
+
+**Real-image regression suite (hard gate before enabling):**
+
+`evidence/reference/lifecycle/` has 13 curated Wikimedia Commons images covering incubation + chick stages, each with `.expected.json` ground truth. Before setting `LIFECYCLE_TRACKING_ENABLED=true`:
+
+```bash
+python -m cardinal_nest_monitor.tools.lifecycle_regression
+# Must report: ALL PASS — safe to enable LIFECYCLE_TRACKING_ENABLED=true
+```
+
+If any image fails, the feature does not ship. The prompt needs tuning first. This is a **hard gate** — not optional.
+
+**Cost of the regression run:** ~$0.30-0.50 per run (13 real Anthropic API calls). Run it before any prompt change that touches the chick/feeding sections.
+
+**Test coverage (as of 2026-04-16):**
+- `tests/test_lifecycle.py` — 15 unit tests covering state transitions, hatch/fledge alerts, feeding suppression, predation-during-feeding, flag-off regression guard
+- `tests/integration/test_lifecycle_cycle.py` — 4 integration tests via Pipeline.on_image including Discord posts
+- 120 total tests pass (101 baseline + 19 new)
+
+**Don't regress this.** A future Claude might be tempted to:
+- Merge the lifecycle transition logic into events.py (keep it in state.py::record() — that's where observation-driven state lives)
+- Remove the 24h cooldown on hatch/fledge rules (prevents re-firing if state hiccups; load-bearing)
+- Loosen the feeding-event suppression to "always suppress during feeding stage" (would miss genuine emergencies; keep the 30-min bounded window)
+
 ---
 
 ## Analytics channel (optional third Discord channel)
@@ -738,7 +800,7 @@ Knobs in order of smallest impact first:
 
 ## Verifying before claiming "it works"
 
-1. `TEST_MODE=true python -m pytest tests/ -v` → all 101 tests pass (74 unit + 27 integration).
+1. `TEST_MODE=true python -m pytest tests/ -v` → all 120 tests pass (89 unit + 31 integration).
 2. `launchctl list | grep cardinalnest` → both `com.cardinalnest.downloader` and `com.cardinalnest.analyzer` show PIDs + exit code 0.
 3. `tail ~/Library/Logs/cardinal-nest-monitor/downloader.out.log` → `Blink connected; N cameras`, `downloader watchdog started`.
 4. `tail ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log` → `spool consumer started`, `feed_worker started`, `analytics_scheduler started`, `watchdog started`.

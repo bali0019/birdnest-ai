@@ -570,6 +570,38 @@ class Notifier:
         }
         return await self._send_json({"embeds": [embed]})
 
+    async def send_lifecycle_event(
+        self,
+        stage: str,
+        title: str,
+        summary: str,
+        snap_path: "Path | None" = None,
+    ) -> bool:
+        """Celebration-style embed for hatch (🐣) / fledge (🦅) events.
+
+        Uses a distinct green color to visually separate from predator
+        alerts (red/orange). When snap_path is provided, the image is
+        attached so users can see what the system saw at the moment of
+        the transition.
+        """
+        embed = {
+            "title": _truncate(_title_with_test_prefix(title), 256),
+            "description": _truncate(summary, _DESCRIPTION_MAX),
+            "color": 0x32CD32,  # lime green — celebration
+            "timestamp": _now_iso_utc(),
+            "fields": [
+                {"name": "Stage", "value": stage, "inline": True},
+                {"name": "Camera", "value": self.camera_name or "—", "inline": True},
+            ],
+            "footer": _footer(),
+        }
+        if snap_path is not None and snap_path.exists():
+            embed["image"] = {"url": f"attachment://{snap_path.name}"}
+            return await self._send_multipart(
+                payload={"embeds": [embed]}, snap_path=snap_path
+            )
+        return await self._send_json({"embeds": [embed]})
+
     # ── internals ──────────────────────────────────────────────────────
     @staticmethod
     def _fmt_eggs(before: int | None, after: int | None) -> str:

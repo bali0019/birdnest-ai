@@ -1,0 +1,9 @@
+{
+  "stage": "incubation",
+  "description": "Back of female cardinal seen through branches on nest \u2014 very obscured, tests confidence calibration.",
+  "cardinal_on_nest": "uncertain",
+  "chicks_visible": "uncertain",
+  "threat_species_detected_empty": true,
+  "confidence_max": 0.7,
+  "_note": "Mom is on nest covering the cup \u2014 chicks_visible must be 'uncertain' (we can't see what's underneath her)"
+}

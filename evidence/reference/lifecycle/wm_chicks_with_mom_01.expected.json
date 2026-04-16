@@ -1,0 +1,10 @@
+{
+  "stage": "chicks_with_mom",
+  "description": "Mother cardinal on nest with older feathered chick visible beside her, in maple foliage. Matches user's camera angle.",
+  "cardinal_on_nest": "true",
+  "chicks_visible": "true",
+  "chick_count_estimate_min": 1,
+  "chick_count_estimate_max": 3,
+  "threat_species_detected_empty": true,
+  "confidence_min": 0.7
+}

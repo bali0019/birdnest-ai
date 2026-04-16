@@ -1,0 +1,11 @@
+{
+  "stage": "incubation",
+  "description": "Close-up of female Northern Cardinal on nest, clear crest and orange beak visible.",
+  "cardinal_on_nest": "true",
+  "mother_cardinal_present": "true",
+  "chicks_visible": "uncertain",
+  "mother_feeding_chicks": false,
+  "threat_species_detected_empty": true,
+  "confidence_min": 0.8,
+  "_note": "Mom is on nest covering the cup \u2014 chicks_visible must be 'uncertain' (we can't see what's underneath her)"
+}

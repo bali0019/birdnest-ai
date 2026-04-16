@@ -1,0 +1,10 @@
+{
+  "stage": "incubation",
+  "description": "Female cardinal on nest seen through dense foliage \u2014 matches Blink camera angle.",
+  "cardinal_on_nest": "true",
+  "chicks_visible": "uncertain",
+  "mother_feeding_chicks": false,
+  "threat_species_detected_empty": true,
+  "confidence_min": 0.6,
+  "_note": "Mom is on nest covering the cup \u2014 chicks_visible must be 'uncertain' (we can't see what's underneath her)"
+}

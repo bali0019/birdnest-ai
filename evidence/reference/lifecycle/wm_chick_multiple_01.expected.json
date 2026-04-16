@@ -1,0 +1,10 @@
+{
+  "stage": "chicks_in_nest",
+  "description": "Multiple cardinal chicks (~4 days, pin feathers, beaks visible) in rose bush nest through green foliage.",
+  "cardinal_on_nest": "false",
+  "chicks_visible": "true",
+  "chick_count_estimate_min": 1,
+  "chick_count_estimate_max": 4,
+  "threat_species_detected_empty": true,
+  "confidence_min": 0.8
+}

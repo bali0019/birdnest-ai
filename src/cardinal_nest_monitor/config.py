@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     # if Anthropic spend becomes an issue.
     multi_image_analysis: bool = Field(True)
 
+    # Lifecycle tracking (2026-04-16). When True, the system detects hatch
+    # events, tracks chick presence, suppresses absence alerts during
+    # feeding, and fires 🐣/🦅 lifecycle events. When False (default), the
+    # new code paths are dormant and the system behaves exactly as before.
+    # Enable only after running tools.lifecycle_regression successfully
+    # against the reference image set.
+    lifecycle_tracking_enabled: bool = Field(False)
+
     # ── Discord ─────────────────────────────────────────────────────────
     discord_webhook_url: str = Field("")
     # Optional second webhook for the per-snap feed channel. Empty = disabled.

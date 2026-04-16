@@ -1,0 +1,10 @@
+{
+  "stage": "chicks_in_nest",
+  "description": "Multiple cardinal nestlings (~5 days old) in rose bush nest with pin feathers and beaks visible. Matches user's camera setup (rose bush).",
+  "cardinal_on_nest": "false",
+  "chicks_visible": "true",
+  "chick_count_estimate_min": 1,
+  "chick_count_estimate_max": 4,
+  "threat_species_detected_empty": true,
+  "confidence_min": 0.8
+}
