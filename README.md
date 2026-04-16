@@ -88,6 +88,24 @@ The fix had three parts. First, I added explicit IR guidance to the prompt: if t
 
 The predator alerts still fire overnight. A raccoon at the nest at 3 AM is a real threat and the system needs to catch it. But the "where is mom" logic learned to admit what it cannot see.
 
+### Catching a four-second attack
+
+A thrasher raid takes about four seconds. Beak in the cup, grab, gone. I watched the original footage several times and realized the sixty-second snap cadence could miss the whole thing. The bird would come and go between frames.
+
+I changed two things.
+
+First, **burst cadence**. For the first three minutes after the cardinal leaves her nest, the system snaps every thirty seconds instead of every sixty. Three minutes is when the risk is highest, when a thrasher watching from a nearby tree is most likely to make its move. After those three minutes the cadence relaxes back to sixty seconds until she returns.
+
+```
+Before:   leave ── 60s ── 60s ── 60s ── 60s ── 60s ── 60s ── return
+After:    leave ─30s─30s─30s─30s─30s─30s ── 60s ── 60s ── 60s ── return
+          │──── burst (first 3 min) ────│──── normal absence ────│
+```
+
+Second, **multi-image analysis**. Each snap now goes to the analyzer as three crops of the same frame: the full view, a tight center crop that makes the nest cup fill the model's attention, and a smaller overview for scene context. The old approach sent one downscaled image, which worked fine when a thrasher was obviously perched on top of the bush but struggled when it mattered, when a beak was half-visible behind a leaf or the distinguishing streaks on its breast were a few pixels wide.
+
+Together these changes compound. The system gets more chances to see an attack happening, and each chance has more detail to work with. The thrasher has to slip past both to succeed.
+
 ### Two model verification
 
 Claude Sonnet 4.6 analyzes every snap. When it flags a CRITICAL or HIGH alert, the system runs a blind second opinion through Opus 4.7. Same image, same prompt, no hint of what Sonnet said. This is not confirmation bias; it is an independent evaluation. Opus can suppress, downgrade, or confirm.

@@ -530,6 +530,16 @@ A thrasher attack takes ~4 seconds. The original 60-second absence cadence could
 
 **How it works:** `StateStore.record()` sets `state.absence_started_ts = ts` when in_absence transitions False→True (and clears it on True→False). The downloader's `get_interval()` callback reads both `in_absence` AND `absence_started_ts`. If the snap is within `burst_duration_seconds` (180s default) of `absence_started_ts`, it uses `burst_snap_interval_seconds` (30s default). After the burst window expires, it falls back to `absence_snap_interval_seconds` (60s). Quiet hours always win.
 
+**Foraging trip timeline:**
+
+```
+Before:   leave ── 60s ── 60s ── 60s ── 60s ── 60s ── 60s ── return
+After:    leave ─30s─30s─30s─30s─30s─30s ── 60s ── 60s ── 60s ── return
+          │──── burst (first 3 min) ────│──── normal absence ────│
+```
+
+First three minutes: 6 snaps instead of 3. After that, relaxes to the normal absence cadence.
+
 **Config**: `BURST_SNAP_INTERVAL_SECONDS=30`, `BURST_DURATION_SECONDS=180`. Both in `.env.example`.
 
 **Precedence in get_interval()**: quiet_hours > burst (if in_absence and within burst window) > absence > default.
