@@ -114,6 +114,9 @@ def enable_test_mode(monkeypatch):
     monkeypatch.setattr(
         settings, "discord_analytics_webhook_url", settings.discord_test_webhook_url
     )
+    monkeypatch.setattr(
+        settings, "discord_lifecycle_webhook_url", settings.discord_test_webhook_url
+    )
 
     # Disable quiet hours so time-dependent rules don't produce flaky
     # results when tests run overnight. Tests that specifically exercise

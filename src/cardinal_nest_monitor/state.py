@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS state (
   last_chick_count INTEGER,
   hatch_detected_ts REAL,
   fledge_detected_ts REAL,
-  last_feeding_event_ts REAL
+  last_feeding_event_ts REAL,
+  first_chick_sighting_ts REAL
 );
 INSERT OR IGNORE INTO state (id) VALUES (1);
 
@@ -124,6 +125,8 @@ class StateStore:
             "ALTER TABLE state ADD COLUMN hatch_detected_ts REAL",
             "ALTER TABLE state ADD COLUMN fledge_detected_ts REAL",
             "ALTER TABLE state ADD COLUMN last_feeding_event_ts REAL",
+            # 2-sighting hatch confirmation (2026-04-16, Step 9)
+            "ALTER TABLE state ADD COLUMN first_chick_sighting_ts REAL",
         ]
         for sql in _migrations:
             try:
@@ -155,6 +158,7 @@ class StateStore:
         hatch_detected_ts = _opt("hatch_detected_ts")
         fledge_detected_ts = _opt("fledge_detected_ts")
         last_feeding_event_ts = _opt("last_feeding_event_ts")
+        first_chick_sighting_ts = _opt("first_chick_sighting_ts")
         return NestState(
             last_mother_seen_ts=row["last_mother_seen_ts"],
             last_known_egg_count=row["last_known_egg_count"],
@@ -168,6 +172,7 @@ class StateStore:
             hatch_detected_ts=hatch_detected_ts,
             fledge_detected_ts=fledge_detected_ts,
             last_feeding_event_ts=last_feeding_event_ts,
+            first_chick_sighting_ts=first_chick_sighting_ts,
             absence_started_ts=absence_started_ts,
         )
 
@@ -204,6 +209,7 @@ class StateStore:
         hatch_detected_ts = _opt("hatch_detected_ts")
         fledge_detected_ts = _opt("fledge_detected_ts")
         last_feeding_event_ts = _opt("last_feeding_event_ts")
+        first_chick_sighting_ts = _opt("first_chick_sighting_ts")
 
         if observation is not None and observation.confidence >= _MIN_CONFIDENCE:
             # During quiet hours, require higher confidence to flip in_absence.
@@ -263,16 +269,53 @@ class StateStore:
             if observation.mother_feeding_chicks:
                 last_feeding_event_ts = ts
 
-            # Transition: incubation → feeding
-            # Trigger: chicks_visible="true" observed OR mother_feeding_chicks=true
-            # (both signals are independently sufficient — either proves chicks exist).
-            if lifecycle_stage == "incubation" and (
-                observation.chicks_visible == "true"
-                or observation.mother_feeding_chicks
-            ):
-                lifecycle_stage = "feeding"
-                if hatch_detected_ts is None:
-                    hatch_detected_ts = ts
+            # Transition: incubation → feeding (with 2-sighting confirmation)
+            # Requires TWO confirming chick signals within a 4-hour window
+            # before transitioning. Protects against a single misread
+            # triggering a false hatch alert — the analyzer sometimes sees
+            # food-in-beak artifacts or misidentifies shadows.
+            #
+            # State machine:
+            #   1st chick signal: store first_chick_sighting_ts, stay in
+            #     incubation ("waiting for confirmation").
+            #   2nd signal within 4h: transition to feeding, fire 🐣.
+            #   No 2nd signal within 4h: reset — this sighting is stale,
+            #     treat the next one as a new "1st sighting".
+            _CONFIRM_WINDOW_S = 4 * 3600
+            if lifecycle_stage == "incubation":
+                chick_signal = (
+                    observation.chicks_visible == "true"
+                    or observation.mother_feeding_chicks
+                )
+                if chick_signal:
+                    if first_chick_sighting_ts is None:
+                        # 1st sighting — record and wait for confirmation.
+                        first_chick_sighting_ts = ts
+                        log.info(
+                            "lifecycle: 1st chick sighting at ts=%.0f; "
+                            "waiting for confirmation within 4h",
+                            ts,
+                        )
+                    elif (ts - first_chick_sighting_ts) <= _CONFIRM_WINDOW_S:
+                        # 2nd sighting within window — CONFIRMED, transition.
+                        lifecycle_stage = "feeding"
+                        if hatch_detected_ts is None:
+                            hatch_detected_ts = ts
+                        first_chick_sighting_ts = None  # clear (we've committed)
+                        log.info(
+                            "lifecycle: chick sighting CONFIRMED — "
+                            "transitioning incubation → feeding at ts=%.0f",
+                            ts,
+                        )
+                    else:
+                        # 1st sighting was too long ago — treat THIS as the
+                        # new 1st sighting, restart the window.
+                        log.info(
+                            "lifecycle: prior chick sighting stale "
+                            "(%.0fs ago); restarting confirmation window",
+                            ts - first_chick_sighting_ts,
+                        )
+                        first_chick_sighting_ts = ts
 
             # Transition: feeding → fledging
             # Trigger: no cardinal visits for ≥12 hours AND no threat event
@@ -325,7 +368,8 @@ class StateStore:
             " last_chick_count = ?, "
             " hatch_detected_ts = ?, "
             " fledge_detected_ts = ?, "
-            " last_feeding_event_ts = ? "
+            " last_feeding_event_ts = ?, "
+            " first_chick_sighting_ts = ? "
             "WHERE id = 1",
             (
                 last_mother_seen_ts,
@@ -339,6 +383,7 @@ class StateStore:
                 hatch_detected_ts,
                 fledge_detected_ts,
                 last_feeding_event_ts,
+                first_chick_sighting_ts,
             ),
         )
         return self._row_to_state(self._load_row())

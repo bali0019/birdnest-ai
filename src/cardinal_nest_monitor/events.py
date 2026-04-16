@@ -117,24 +117,33 @@ def _lifecycle_event(
     if observation.confidence < _MIN_CONFIDENCE:
         return None
 
-    # Hatch: predict incubation → feeding
-    # Trigger: chicks_visible="true" OR mother_feeding_chicks=true while
-    # currently in incubation.
+    # Hatch: predict incubation → feeding with 2-sighting confirmation.
+    # Mirror the state.py::record() logic exactly:
+    #   - Alert fires ONLY on the 2nd confirming chick signal within the
+    #     4-hour window.
+    #   - 1st sighting sets first_chick_sighting_ts in state but fires
+    #     nothing — we stay quiet until confirmation arrives.
+    _CONFIRM_WINDOW_S = 4 * 3600
     if state.lifecycle_stage == "incubation" and (
         observation.chicks_visible == "true"
         or observation.mother_feeding_chicks
     ):
-        sev = Severity.LOW
-        if not _cooldown_blocks(store, sev, "hatch", 24 * 3600, ts):
-            return AlertDecision(
-                severity=sev,
-                title="🐣 Chicks hatched!",
-                summary="First confirmed chick observation. Feeding stage begins.",
-                species=[],
-                mother_present=observation.mother_cardinal_present,
-                confidence=observation.confidence,
-                rule_id="hatch",
-            )
+        is_confirmation = (
+            state.first_chick_sighting_ts is not None
+            and (ts - state.first_chick_sighting_ts) <= _CONFIRM_WINDOW_S
+        )
+        if is_confirmation:
+            sev = Severity.LOW
+            if not _cooldown_blocks(store, sev, "hatch", 24 * 3600, ts):
+                return AlertDecision(
+                    severity=sev,
+                    title="🐣 Chicks hatched!",
+                    summary="Chick presence confirmed by two independent observations. Feeding stage begins.",
+                    species=[],
+                    mother_present=observation.mother_cardinal_present,
+                    confidence=observation.confidence,
+                    rule_id="hatch",
+                )
 
     # Fledge: predict feeding → fledging
     # Trigger: no cardinal visits in 12+ hours AND no threat in 48h AND

@@ -353,14 +353,16 @@ class NestState(BaseModel):
     # not in absence.
     absence_started_ts: float | None = None
 
-    # Lifecycle tracking (2026-04-16, feature-flag gated). When
-    # lifecycle_tracking_enabled=False these stay at defaults and are ignored
-    # by the events engine.
+    # Lifecycle tracking (2026-04-16).
     lifecycle_stage: Literal["incubation", "feeding", "fledging", "empty"] = "incubation"
     last_chick_count: int | None = None
-    hatch_detected_ts: float | None = None  # set when first chick observed
+    hatch_detected_ts: float | None = None  # set when 2nd confirming chick signal arrives
     fledge_detected_ts: float | None = None  # set on fledge transition
     last_feeding_event_ts: float | None = None  # set on mother_feeding_chicks=true
+    # Timestamp of the first (unconfirmed) chick sighting. A second confirming
+    # chick signal within 4 hours triggers the hatch transition. After 4 hours
+    # without confirmation, this resets (stale sighting — possibly a misread).
+    first_chick_sighting_ts: float | None = None
 
     def absence_seconds(self, now_ts: float) -> int | None:
         if self.last_mother_seen_ts is None:

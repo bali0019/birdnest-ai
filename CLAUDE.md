@@ -118,7 +118,7 @@ data/state.sqlite                             gitignored. Runtime state (observa
 data/spool/                                   gitignored. Atomic-rename spool for downloader→analyzer handoff. See §20.
 evidence/YYYY-MM-DD/                          gitignored. One directory per snap.
 evidence/reference/                           NOT gitignored (intentionally). Hand-curated regression test images for prompt changes — see Hard-won knowledge §15.
-tests/                                        pytest. Run with `python -m pytest tests/`. 89 unit + 31 integration = 120 tests (including spool + backfill guards), all should pass.
+tests/                                        pytest. Run with `python -m pytest tests/`. 91 unit + 31 integration = 122 tests (including spool + backfill guards), all should pass.
 ```
 
 ---
@@ -563,11 +563,15 @@ Anthropic supports multi-image requests natively. The three crops let the model 
 
 **Opus 4.7 as verifier**: upgraded from 4.6 to 4.7 same day. Better vision, new high-resolution image support. Especially helpful on the detail-heavy center-crop variant.
 
-### 23. Lifecycle tracking (2026-04-16, feature-flag gated, NOT yet deployed)
+### 23. Lifecycle tracking (2026-04-16, default ON)
 
 Automatic detection of egg hatch → feeding → fledge transitions. The problem it solves: without this, the system keeps reporting "cardinal not on nest" as absence alarms when mom is actually off foraging for chicks. Cardinals start feeding chicks within hours of hatch and the absence pattern changes completely.
 
-**Gated by `LIFECYCLE_TRACKING_ENABLED` in `.env`. Default False. Leave off until regression passes.**
+**Default ON via `LIFECYCLE_TRACKING_ENABLED=true`.** Set to `false` in `.env` as an escape hatch if a false positive fires — no code deploy needed, just restart the analyzer. The 2-sighting confirmation guard (below) makes false hatches very unlikely but the flag remains available.
+
+**2-sighting confirmation guard (load-bearing):** a single chick sighting does NOT transition the stage. The 1st confirming signal (`chicks_visible="true"` OR `mother_feeding_chicks=true`) sets `state.first_chick_sighting_ts`. A 2nd confirming signal within 4 hours triggers the transition and fires the 🐣 alert. A 2nd signal OUTSIDE the 4-hour window is treated as a fresh "1st sighting" (the prior one was stale). This protects against a one-off analyzer misread triggering a false 🐣 alert. Cost: hatch detection is delayed by one snap interval (~30s-1min during burst, ~5min during normal cadence) — acceptable since the operational benefit is "stop firing false MEDIUMs during feeding" not "fire 🐣 within milliseconds of first chick sighting."
+
+**Dedicated Discord channel**: 🐣/🦅 events route to `DISCORD_LIFECYCLE_WEBHOOK_URL` (if configured) instead of the urgent alerts channel. Keeps the urgent channel focused on threats. Backfill routing takes precedence over lifecycle routing (a stale backfilled hatch alert gets `[BACKFILL +Nm]` tag on the backfill channel rather than appearing as live on the lifecycle channel).
 
 **Detection approach — camera angle constrained:**
 
@@ -800,7 +804,7 @@ Knobs in order of smallest impact first:
 
 ## Verifying before claiming "it works"
 
-1. `TEST_MODE=true python -m pytest tests/ -v` → all 120 tests pass (89 unit + 31 integration).
+1. `TEST_MODE=true python -m pytest tests/ -v` → all 122 tests pass (91 unit + 31 integration).
 2. `launchctl list | grep cardinalnest` → both `com.cardinalnest.downloader` and `com.cardinalnest.analyzer` show PIDs + exit code 0.
 3. `tail ~/Library/Logs/cardinal-nest-monitor/downloader.out.log` → `Blink connected; N cameras`, `downloader watchdog started`.
 4. `tail ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log` → `spool consumer started`, `feed_worker started`, `analytics_scheduler started`, `watchdog started`.

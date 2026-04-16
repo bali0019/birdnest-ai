@@ -104,17 +104,16 @@ async def test_lifecycle_off_by_default_behaves_like_today(
 
 # ── Hatch alert end-to-end ────────────────────────────────────────────
 
-async def test_hatch_alert_fires_through_pipeline(
+async def test_hatch_alert_fires_through_pipeline_after_confirmation(
     monkeypatch, store, evidence, notifier, lifecycle_on,
 ):
-    """When the mocked analyzer reports chicks_visible=true for the first
-    time, Pipeline.on_image fires a LOW hatch alert via send_alert."""
-    # Need a real JPEG for the pipeline to process.
-    # Use a smaller image (< 8MB) to stay under Discord's attachment limit.
+    """Hatch alert requires 2 confirming chick signals through the pipeline.
+    First snap records the sighting silently; second snap fires the alert."""
+    # Small JPEG (< 8MB) to stay under Discord's attachment limit.
     chick_jpeg = (_LIFECYCLE_DIR / "wm_chick_hatchling_01.jpg").read_bytes()
 
     # Seed incubation state first
-    t0 = time.time() - 3600
+    t0 = time.time() - 7200
     store.record(t0, False, None, _obs(), None)
 
     # Capture send_alert calls
@@ -127,7 +126,7 @@ async def test_hatch_alert_fires_through_pipeline(
 
     monkeypatch.setattr(notifier, "send_alert", _capture)
 
-    # Mock analyzer to return chicks_visible=true
+    # Mock analyzer to return chicks_visible=true on every snap
     analyze_mock = AsyncMock(return_value=_obs(
         cardinal_on_nest="false",
         mother_cardinal_present="false",
@@ -138,21 +137,26 @@ async def test_hatch_alert_fires_through_pipeline(
     monkeypatch.setattr(analyzer_mod, "analyze", analyze_mock)
 
     pipeline = _pipeline(store, notifier, evidence)
-    await pipeline.on_image(
-        chick_jpeg,
-        {"motion_triggered": False, "ts": time.time()},
-    )
 
-    # A hatch alert must have fired.
+    # 1st snap — no hatch alert should fire yet
+    t1 = t0 + 3600
+    await pipeline.on_image(chick_jpeg, {"motion_triggered": False, "ts": t1})
+    hatch_alerts = [d for d in captured if d.rule_id == "hatch"]
+    assert len(hatch_alerts) == 0, (
+        f"expected no hatch alert on 1st sighting, got {len(hatch_alerts)}"
+    )
+    assert store.get_state().lifecycle_stage == "incubation"
+    assert store.get_state().first_chick_sighting_ts is not None
+
+    # 2nd snap within confirmation window — hatch alert fires
+    t2 = t1 + 1800
+    await pipeline.on_image(chick_jpeg, {"motion_triggered": False, "ts": t2})
     hatch_alerts = [d for d in captured if d.rule_id == "hatch"]
     assert len(hatch_alerts) == 1, (
-        f"expected one hatch alert, got {len(captured)} total: "
-        f"{[d.rule_id for d in captured]}"
+        f"expected one hatch alert after 2nd sighting, got {len(hatch_alerts)}"
     )
     assert hatch_alerts[0].severity == Severity.LOW
     assert "🐣" in hatch_alerts[0].title
-
-    # State should be in feeding now
     assert store.get_state().lifecycle_stage == "feeding"
 
 
@@ -164,9 +168,12 @@ async def test_feeding_stage_suppresses_medium_absence_alerts(
 ):
     """Once in feeding stage, a recent feeding event should suppress
     MEDIUM long_absence alerts (she's expected to be away feeding)."""
-    # Seed feeding stage with a feeding event at t0
+    # Seed feeding stage with 2 confirming feeding events (2-sighting guard)
     t0 = time.time() - 7200
-    from cardinal_nest_monitor.state import StateStore
+    store.record(t0 - 300, False, None, _obs(
+        cardinal_on_nest="true",
+        mother_feeding_chicks=True,
+    ), None)
     store.record(t0, False, None, _obs(
         cardinal_on_nest="true",
         mother_feeding_chicks=True,
@@ -224,8 +231,13 @@ async def test_predation_during_feeding_stage_still_critical(
     """A thrasher reaching into the nest during the feeding stage must
     still fire CRITICAL. Feeding-stage rules don't protect chicks from
     predators."""
-    # Seed feeding stage
+    # Seed feeding stage — 2 confirming sightings required
     t0 = time.time() - 3600
+    store.record(t0 - 300, False, None, _obs(
+        cardinal_on_nest="false",
+        chicks_visible="true",
+        chick_count_estimate=2,
+    ), None)
     store.record(t0, False, None, _obs(
         cardinal_on_nest="false",
         chicks_visible="true",

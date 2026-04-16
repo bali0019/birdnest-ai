@@ -102,14 +102,25 @@ class Notifier:
         title = f"{sev.emoji} {sev.value}: {decision.title}"
         settings = get_settings()
 
-        # Backfill routing: when backfill_age_seconds is set (≥0), this is a
-        # stale alert replayed from persisted state — route to the backfill
-        # webhook and prefix the title. Otherwise behavior is unchanged.
+        # Lifecycle routing: hatch/fledge events are celebrations, not
+        # threats — route them to the dedicated lifecycle channel when
+        # configured so the urgent #alerts channel stays focused on
+        # threats. Falls back to the urgent channel if the lifecycle
+        # webhook isn't configured.
         target_url: str | None = None
         backfill_prefix: str = ""
+        if decision.rule_id in ("hatch", "fledge"):
+            lifecycle_url = settings.discord_lifecycle_webhook_url
+            if lifecycle_url:
+                target_url = lifecycle_url
+
+        # Backfill routing: when backfill_age_seconds is set (≥0), this is a
+        # stale alert replayed from persisted state — route to the backfill
+        # webhook and prefix the title. Takes precedence over lifecycle
+        # routing (a stale backfilled hatch alert is more confusing without
+        # the [BACKFILL] marker than it is misrouted).
         if backfill_age_seconds is not None and backfill_age_seconds >= 0:
-            backfill_settings = get_settings()
-            target_url = backfill_settings.discord_backfill_webhook_url
+            target_url = settings.discord_backfill_webhook_url
             if not target_url:
                 log.warning(
                     "backfill alert suppressed — DISCORD_BACKFILL_WEBHOOK_URL not set"

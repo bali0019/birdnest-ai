@@ -47,11 +47,13 @@ class Settings(BaseSettings):
 
     # Lifecycle tracking (2026-04-16). When True, the system detects hatch
     # events, tracks chick presence, suppresses absence alerts during
-    # feeding, and fires 🐣/🦅 lifecycle events. When False (default), the
-    # new code paths are dormant and the system behaves exactly as before.
-    # Enable only after running tools.lifecycle_regression successfully
-    # against the reference image set.
-    lifecycle_tracking_enabled: bool = Field(False)
+    # feeding, and fires 🐣/🦅 lifecycle events.
+    # Default True as of 2026-04-16 with 2-sighting confirmation guard in
+    # place. Set to False in .env to disable without a code deploy if a
+    # false positive fires (an escape hatch, not the expected path).
+    # Regression: `python -m cardinal_nest_monitor.tools.lifecycle_regression`
+    # must pass 13/13 before any analyzer prompt change.
+    lifecycle_tracking_enabled: bool = Field(True)
 
     # ── Discord ─────────────────────────────────────────────────────────
     discord_webhook_url: str = Field("")
@@ -60,6 +62,13 @@ class Settings(BaseSettings):
     # Optional third webhook for aggregated behavior analytics. Empty = disabled.
     # Runs on a dedicated thread pool; zero impact on alert / feed hot paths.
     discord_analytics_webhook_url: str = Field("")
+    # Dedicated webhook for lifecycle events (🐣 hatch, 🦅 fledge). When set,
+    # hatch/fledge alerts route here instead of the urgent #alerts channel.
+    # Keeps the urgent channel reserved for threat alerts and keeps
+    # celebration events visually separate. Empty = route to urgent channel
+    # (default/fallback behavior if lifecycle channel isn't configured).
+    discord_lifecycle_webhook_url: str = Field("")
+
     # Hours between analytics reports (drift from service start). Default 8h.
     analytics_report_hours: int = Field(8, ge=1, le=48)
     # Wall-clock hour (0–23) to post a daily 24-hour summary report.
