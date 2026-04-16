@@ -306,6 +306,11 @@ class NestState(BaseModel):
     last_alert_severity: Severity | None = None
     last_absence_alert_ts: float | None = None
     in_absence: bool = False  # True if mother currently considered absent
+    # Wall-clock ts when `in_absence` flipped False → True. Consumed by the
+    # downloader's burst-cadence path: first N seconds after absence onset
+    # are peak predation risk and use burst_snap_interval_seconds. None when
+    # not in absence.
+    absence_started_ts: float | None = None
 
     def absence_seconds(self, now_ts: float) -> int | None:
         if self.last_mother_seen_ts is None:

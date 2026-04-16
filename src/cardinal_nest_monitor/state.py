@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS state (
   last_threat_species TEXT,
   last_alert_severity TEXT,
   last_absence_alert_ts REAL,
-  in_absence INTEGER NOT NULL DEFAULT 0
+  in_absence INTEGER NOT NULL DEFAULT 0,
+  absence_started_ts REAL
 );
 INSERT OR IGNORE INTO state (id) VALUES (1);
 
@@ -104,6 +105,19 @@ class StateStore:
         self._conn.execute("PRAGMA synchronous=NORMAL")  # WAL-safe balanced durability
         self._conn.executescript(_SCHEMA_SQL)
 
+        # Idempotent migration: add absence_started_ts for burst cadence
+        # (2026-04-16). Existing DBs created before this column existed need
+        # the column added in-place. ALTER TABLE throws "duplicate column"
+        # when the column already exists — catch and swallow that so the
+        # migration is safe to run on every startup.
+        try:
+            self._conn.execute(
+                "ALTER TABLE state ADD COLUMN absence_started_ts REAL"
+            )
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
     # ── State row helpers ──────────────────────────────────────────────
     def _load_row(self) -> sqlite3.Row:
         cur = self._conn.execute("SELECT * FROM state WHERE id = 1")
@@ -113,6 +127,13 @@ class StateStore:
 
     def _row_to_state(self, row: sqlite3.Row) -> NestState:
         sev = row["last_alert_severity"]
+        # absence_started_ts is fetched via keys() check to stay defensive if
+        # the column is ever renamed. After the idempotent migration at boot,
+        # this key always exists.
+        try:
+            absence_started_ts = row["absence_started_ts"]
+        except (IndexError, KeyError):
+            absence_started_ts = None
         return NestState(
             last_mother_seen_ts=row["last_mother_seen_ts"],
             last_known_egg_count=row["last_known_egg_count"],
@@ -121,6 +142,7 @@ class StateStore:
             last_alert_severity=Severity(sev) if sev else None,
             last_absence_alert_ts=row["last_absence_alert_ts"],
             in_absence=bool(row["in_absence"]),
+            absence_started_ts=absence_started_ts,
         )
 
     def get_state(self) -> NestState:
@@ -141,6 +163,11 @@ class StateStore:
         last_threat_seen_ts = row["last_threat_seen_ts"]
         last_threat_species = row["last_threat_species"]
         in_absence = bool(row["in_absence"])
+        prev_in_absence = in_absence
+        try:
+            absence_started_ts = row["absence_started_ts"]
+        except (IndexError, KeyError):
+            absence_started_ts = None
 
         if observation is not None and observation.confidence >= _MIN_CONFIDENCE:
             # During quiet hours, require higher confidence to flip in_absence.
@@ -170,6 +197,17 @@ class StateStore:
                 last_threat_seen_ts = ts
                 last_threat_species = _threat_to_str(observation.threat_species_detected[0])
 
+        # Track the absence-onset timestamp so the downloader's burst-cadence
+        # path knows how long mom has been gone. Only mutate on transitions:
+        #   False → True  → set to ts (absence started now)
+        #   True  → False → clear to None (she's back)
+        #   unchanged     → leave as-is (preserve original onset)
+        if in_absence and not prev_in_absence:
+            absence_started_ts = ts
+        elif prev_in_absence and not in_absence:
+            absence_started_ts = None
+        # else: no change, absence_started_ts stays whatever it was on load.
+
         self._conn.execute(
             "INSERT INTO observations (ts, motion_triggered, prefilter_json, observation_json, evidence_dir) "
             "VALUES (?, ?, ?, ?, ?)",
@@ -187,7 +225,8 @@ class StateStore:
             " last_known_egg_count = ?, "
             " last_threat_seen_ts = ?, "
             " last_threat_species = ?, "
-            " in_absence = ? "
+            " in_absence = ?, "
+            " absence_started_ts = ? "
             "WHERE id = 1",
             (
                 last_mother_seen_ts,
@@ -195,6 +234,7 @@ class StateStore:
                 last_threat_seen_ts,
                 last_threat_species,
                 1 if in_absence else 0,
+                absence_started_ts,
             ),
         )
         return self._row_to_state(self._load_row())

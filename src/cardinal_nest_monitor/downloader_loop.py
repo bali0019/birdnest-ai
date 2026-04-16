@@ -282,15 +282,32 @@ async def run_downloader_service() -> int:
                 label = "stale-state-fallback"
             else:
                 try:
-                    in_absence = store.get_state().in_absence
+                    _state = store.get_state()
+                    in_absence = _state.in_absence
+                    absence_started_ts = _state.absence_started_ts
                 except Exception:
                     log.exception(
                         "downloader: store.get_state() raised; using default interval"
                     )
                     in_absence = False
+                    absence_started_ts = None
                 if in_absence:
-                    interval = settings.absence_snap_interval_seconds
-                    label = "absence"
+                    # Burst cadence: peak-predation-risk window for the first
+                    # burst_duration_seconds after absence onset. Thrasher
+                    # attacks are ~4s events; 60s absence cadence can miss
+                    # them. Tighten to burst_snap_interval_seconds for the
+                    # first few minutes, then relax back to the normal
+                    # absence interval.
+                    if (
+                        absence_started_ts is not None
+                        and (time.time() - absence_started_ts)
+                        < settings.burst_duration_seconds
+                    ):
+                        interval = settings.burst_snap_interval_seconds
+                        label = "burst"
+                    else:
+                        interval = settings.absence_snap_interval_seconds
+                        label = "absence"
                 else:
                     interval = settings.snap_interval_seconds
                     label = "default"

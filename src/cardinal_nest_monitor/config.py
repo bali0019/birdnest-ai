@@ -33,9 +33,17 @@ class Settings(BaseSettings):
     # Second-pass verification model. Re-analyzes the same image on
     # CRITICAL/HIGH alerts before firing (see verifier.py). Blind second
     # opinion reduces false CRITICALs from single-model misidentifications.
-    verification_model: str = Field("claude-opus-4-6")
+    verification_model: str = Field("claude-opus-4-7")
     # Toggle to disable verification entirely (fall back to one-pass alerts).
     verify_alerts_with_opus: bool = Field(True)
+
+    # Send three crops (full / center-zoom / overview) per snap to the
+    # analyzer instead of one full-frame image. Improves recall on subtle
+    # thrasher features half-hidden by foliage (§§ 14, 15) at the cost of
+    # roughly 2–3x the per-snap Anthropic input-token bill. Default on;
+    # set MULTI_IMAGE_ANALYSIS=false to fall back to the single-image path
+    # if Anthropic spend becomes an issue.
+    multi_image_analysis: bool = Field(True)
 
     # ── Discord ─────────────────────────────────────────────────────────
     discord_webhook_url: str = Field("")
@@ -69,6 +77,12 @@ class Settings(BaseSettings):
     # Pattern A: cadence used when state.in_absence=True (mom is off the nest
     # ≥ 2 min). Peak predation risk window. Default 60s. Quiet hours override.
     absence_snap_interval_seconds: int = Field(60, ge=15, le=600)
+
+    # Burst cadence: ultra-tight interval for the first N seconds after mom
+    # leaves. Peak predation risk window. Drops to this for burst_duration_seconds
+    # after in_absence flips True, then relaxes to absence_snap_interval_seconds.
+    burst_snap_interval_seconds: int = Field(30, ge=10, le=120)
+    burst_duration_seconds: int = Field(180, ge=30, le=900)  # 3 min default
 
     # ── Operational ─────────────────────────────────────────────────────
     battery_report_hours: int = Field(6, ge=1, le=24)

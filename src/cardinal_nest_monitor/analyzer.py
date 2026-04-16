@@ -12,7 +12,7 @@ import logging
 import anthropic
 from anthropic import AsyncAnthropic
 
-from cardinal_nest_monitor._image import downscale_jpeg_b64
+from cardinal_nest_monitor._image import downscale_jpeg_b64, prepare_multi_image
 from cardinal_nest_monitor.config import get_settings
 from cardinal_nest_monitor.schema import NEST_TOOL, NestObservation
 
@@ -139,18 +139,37 @@ async def analyze(
     settings = get_settings()
     client = _get_client()
     model = model_override or settings.analyzer_model
-    b64 = downscale_jpeg_b64(jpeg_bytes, max_width=1280)
 
-    user_content: list[dict] = [
-        {
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/jpeg",
-                "data": b64,
-            },
-        },
-    ]
+    # Multi-image mode sends three deterministic crops of the same snap
+    # (full frame / center zoom / ~512px overview). This roughly triples
+    # the per-snap Anthropic input-token cost — ~$0.01 → ~$0.02–0.03 — but
+    # materially improves recall on small thrasher-vs-cardinal features
+    # half-hidden by foliage (see CLAUDE.md §§ 14, 15). Toggle off via
+    # MULTI_IMAGE_ANALYSIS=false if cost becomes an issue.
+    user_content: list[dict] = []
+    if settings.multi_image_analysis:
+        user_content.append(
+            {
+                "type": "text",
+                "text": (
+                    "Here are three views of the same snap: full frame, "
+                    "center crop (zoomed), and overview."
+                ),
+            }
+        )
+        user_content.extend(prepare_multi_image(jpeg_bytes))
+    else:
+        b64 = downscale_jpeg_b64(jpeg_bytes, max_width=1280)
+        user_content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": b64,
+                },
+            }
+        )
     if extra_user_text:
         user_content.append({"type": "text", "text": extra_user_text})
 

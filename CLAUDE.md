@@ -56,14 +56,18 @@ MOTION POLL LOOP (every 15s, currently no-op — runs inside downloader):
 
 **If motion detection is re-enabled**, motion events trigger out-of-cycle snaps with ~60–120s floor (clip-upload bottleneck, see Hard-won knowledge §11).
 
-## Cadence configuration (current production values, 2026-04-15)
+## Cadence configuration (current production values, 2026-04-16)
 
 | Setting | Value | Why |
 |---|---|---|
 | `ANALYZER_MODEL` | `claude-sonnet-4-6` | Single-tier. Was Opus 4.6. Sonnet is ~5x cheaper with no meaningful accuracy regression for threat detection. |
+| `VERIFICATION_MODEL` | `claude-opus-4-7` | Upgraded from 4.6 on 2026-04-16 (4.7 released same week). Better vision, new high-res image support. Used for blind second-opinion on CRITICAL/HIGH. |
+| `MULTI_IMAGE_ANALYSIS` | `true` | Analyzer receives 3 crops per snap (full + center-zoom + overview) for better recall on subtle thrasher features. Roughly 2-3x input tokens. |
 | `PREFILTER_MODEL` | `claude-haiku-4-5-20251001` | **Unused in single-tier mode.** Kept in config for easy re-enable. |
 | `SNAP_INTERVAL_SECONDS` | 300 (5 min) | Default day cadence when mom is on nest. |
-| `ABSENCE_SNAP_INTERVAL_SECONDS` | 60 (1 min) | **Pattern A.** Tight cadence when `state.in_absence=True` (peak predation risk). |
+| `ABSENCE_SNAP_INTERVAL_SECONDS` | 60 (1 min) | **Pattern A.** Fallback cadence when `state.in_absence=True` and burst window expired. |
+| `BURST_SNAP_INTERVAL_SECONDS` | 30 | **Burst.** First N seconds after mom leaves. Peak predation risk. Thrasher attacks are 4s. |
+| `BURST_DURATION_SECONDS` | 180 (3 min) | How long burst cadence applies after absence starts. After this, relaxes to ABSENCE interval. |
 | `QUIET_HOURS` | 23:00-05:00 | 6h overnight quiet window. Includes raccoon/opossum peak hours. |
 | `QUIET_SNAP_INTERVAL_SECONDS` | 1800 (30 min) | Sparse overnight baseline. Overrides absence interval during quiet hours. |
 | `FORCED_OPUS_INTERVAL_SECONDS` | 900 (15 min) | **Unused in single-tier mode** (no tier escalation to force). Kept for re-enable. |
@@ -76,7 +80,7 @@ Daily volume at these settings (assuming ~95% on-nest / ~5% absent during day):
 - Day absent (~55 snaps during 1.2h of foraging) ≈ **55 snaps/day**
 - Quiet (6h × 2/h) ≈ **12 scheduled snaps/day**
 - Motion-triggered (Blink motion off) ≈ **0 snaps/day**
-- **Total: ~270 snaps/day**, ~$90/mo Anthropic spend.
+- **Total: ~270 snaps/day**, ~$180-270/mo Anthropic spend (with multi-image analysis on; ~$90/mo if disabled).
 
 ---
 
@@ -519,6 +523,35 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ (edit paths in the plis
 - `tests/test_spool_unit.py` (11 tests), `tests/integration/test_spool_lifecycle.py` (5 tests), `tests/integration/test_backfill_routing.py` (4 tests).
 
 **Don't regress this.** A future Claude might be tempted to merge the two services back into one "for simplicity." That is the exact path that produced the 2026-04-15 outage cascade. The decoupled architecture exists so that the volatile analyzer code (Anthropic calls, Discord webhooks, rules engine, verifier) can be iterated on without ever interrupting the stable downloader (Blink API + disk writes). If you need to change both, restart both — but the default deploy path should only touch the analyzer. The downloader changes maybe once a quarter; the analyzer changes weekly.
+
+### 21. Burst cadence after absence (2026-04-16)
+
+A thrasher attack takes ~4 seconds. The original 60-second absence cadence could miss a full raid. Burst cadence tightens the interval to 30 seconds for the first 3 minutes after `in_absence` flips True.
+
+**How it works:** `StateStore.record()` sets `state.absence_started_ts = ts` when in_absence transitions False→True (and clears it on True→False). The downloader's `get_interval()` callback reads both `in_absence` AND `absence_started_ts`. If the snap is within `burst_duration_seconds` (180s default) of `absence_started_ts`, it uses `burst_snap_interval_seconds` (30s default). After the burst window expires, it falls back to `absence_snap_interval_seconds` (60s). Quiet hours always win.
+
+**Config**: `BURST_SNAP_INTERVAL_SECONDS=30`, `BURST_DURATION_SECONDS=180`. Both in `.env.example`.
+
+**Precedence in get_interval()**: quiet_hours > burst (if in_absence and within burst window) > absence > default.
+
+**Cost impact**: a typical foraging trip (~5-15 min) now gets ~6 snaps in the first 3 min (instead of 3), then relaxes. Worst case ~2x snaps during absence windows, but absence windows are only ~5% of the day, so overall cost impact is small.
+
+**Don't regress.** If you see `burst_snap_interval_seconds` removed or clamped higher than 60s, reconsider — the whole point is catching the 4-second raid window.
+
+### 22. Multi-image analysis (2026-04-16)
+
+Previously the analyzer received one downscaled JPEG per snap. Now it receives THREE crops per request:
+- **Full frame** (~1024px) — context
+- **Center crop** (middle 60%, up to 1280px at quality 90) — detail on the nest area
+- **Overview** (~512px) — whole-scene context
+
+Anthropic supports multi-image requests natively. The three crops let the model see both fine detail and context in a single inference call. Recall on subtle thrasher features improves (per Codex review: "what image(s) the model sees matters as much as the model name").
+
+**Implementation**: `_image.prepare_multi_image(jpeg)` returns a list of 3 content blocks. `analyzer.analyze()` prepends a caption text block, then all three images, then the optional `extra_user_text` (verifier nudge). When `MULTI_IMAGE_ANALYSIS=false`, falls back to the single-image path.
+
+**Cost**: ~2-3x input tokens per snap. At ~270 snaps/day: ~$180-270/mo (vs ~$90/mo baseline). Toggle with `MULTI_IMAGE_ANALYSIS=false` if spend becomes an issue.
+
+**Opus 4.7 as verifier**: upgraded from 4.6 to 4.7 same day. Better vision, new high-resolution image support. Especially helpful on the detail-heavy center-crop variant.
 
 ---
 

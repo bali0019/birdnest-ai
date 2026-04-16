@@ -38,7 +38,7 @@ Most of the time, the answer is boring.
 
 ![Brown Thrasher near the cardinal nest](evidence/reference/historical_thrasher_1.jpg)
 
-*A thrasher. The system identifies it by the long tail, the streaked breast, the absence of a crest. It fires a HIGH alert to my phone immediately. Before the notification arrives, a second model, Claude Opus 4.6, reviews the same image cold, with no knowledge of the first model's verdict. If Opus disagrees, the alert is suppressed. If Opus agrees, it goes through. This one went through.*
+*A thrasher. The system identifies it by the long tail, the streaked breast, the absence of a crest. It fires a HIGH alert to my phone immediately. Before the notification arrives, a second model, Claude Opus 4.7, reviews the same image cold, with no knowledge of the first model's verdict. If Opus disagrees, the alert is suppressed. If Opus agrees, it goes through. This one went through.*
 
 ### Mom is gone
 
@@ -67,7 +67,7 @@ They are separate on purpose. On April 15, 2026, a stuck API call froze the enti
 │                          │          │                              │
 │  Blink camera            │  spool   │  Claude Sonnet 4.6           │
 │    snap every 1 to 5 min ├────────→ │    species ID + threat eval  │
-│    save to disk          │          │    Opus 4.6 verification     │
+│    save to disk          │          │    Opus 4.7 verification     │
 │                          │          │    Discord alerts            │
 │  Never stops.            │          │    feed + analytics          │
 │  Not even during         │          │                              │
@@ -90,7 +90,7 @@ The predator alerts still fire overnight. A raccoon at the nest at 3 AM is a rea
 
 ### Two model verification
 
-Claude Sonnet 4.6 analyzes every snap. When it flags a CRITICAL or HIGH alert, the system runs a blind second opinion through Opus 4.6. Same image, same prompt, no hint of what Sonnet said. This is not confirmation bias; it is an independent evaluation. Opus can suppress, downgrade, or confirm.
+Claude Sonnet 4.6 analyzes every snap. When it flags a CRITICAL or HIGH alert, the system runs a blind second opinion through Opus 4.7. Same image, same prompt, no hint of what Sonnet said. This is not confirmation bias; it is an independent evaluation. Opus can suppress, downgrade, or confirm.
 
 The female cardinal and the Brown Thrasher are both brownish birds. The analyzer prompt includes field marks: red crest means cardinal, never a threat; long tail plus streaked breast plus yellow eye means thrasher, always a threat; can't tell means unknown, which still fires an alert, because I would rather get woken up for nothing than miss the real thing.
 
@@ -108,7 +108,7 @@ The female cardinal and the Brown Thrasher are both brownish birds. The analyzer
 | | |
 |---|---|
 | Snaps per day | ~270 |
-| Monthly cost (Anthropic) | ~$90 |
+| Monthly cost (Anthropic) | ~$180-270 (multi-image on) |
 | Camera battery life | 10 to 14 days |
 | Tests in the suite | 85 |
 | Reaction time when she's away | Under a minute |
@@ -122,7 +122,7 @@ The female cardinal and the Brown Thrasher are both brownish birds. The analyzer
 
 - macOS with Python 3.11+
 - [Blink Outdoor](https://blinkforhome.com/) camera pointed at the nest
-- [Anthropic API key](https://console.anthropic.com/) with Sonnet 4.6 + Opus 4.6 access
+- [Anthropic API key](https://console.anthropic.com/) with Sonnet 4.6 + Opus 4.7 access
 - Discord server with webhook URLs for up to 4 channels
 
 ### Install
@@ -177,14 +177,14 @@ TEST_MODE=true python -m pytest tests/ -v
 
 ## Tech stack
 
-Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.6 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. 85 tests in pytest, including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
+Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. 85 tests in pytest, including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
 
 ## Project structure
 
 ```
 src/cardinal_nest_monitor/
   analyzer.py          Sonnet 4.6 vision analysis with species ID prompt
-  verifier.py          Opus 4.6 blind second opinion on threats
+  verifier.py          Opus 4.7 blind second opinion on threats
   events.py            Rules engine (severity levels, cooldowns, absence tracking)
   state.py             SQLite state (observations, alerts, derived nest state)
   notifier.py          Discord webhooks (4 channels, severity colored embeds)
