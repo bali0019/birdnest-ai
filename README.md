@@ -125,11 +125,12 @@ The female cardinal and the Brown Thrasher are both brownish birds. The analyzer
 
 | | |
 |---|---|
-| Snaps per day | ~270 |
+| Snaps per day | ~285 |
 | Monthly cost (Anthropic) | ~$180-270 (multi-image on) |
 | Camera battery life | 10 to 14 days |
-| Tests in the suite | 85 |
-| Reaction time when she's away | Under a minute |
+| Tests in the suite | 101 |
+| Reaction time in the burst window (first 3 min after she leaves) | Under 30 seconds |
+| Reaction time when she's away (after burst) | Under a minute |
 | Reaction time when she's home | Under five minutes |
 | Models that know the cardinal exists | 2 |
 | Cardinals that know the models exist | 0 |
@@ -190,12 +191,12 @@ launchctl list | grep cardinalnest
 ```bash
 source venv/bin/activate
 TEST_MODE=true python -m pytest tests/ -v
-# 85 tests. All must pass before deploying any change.
+# 101 tests. All must pass before deploying any change.
 ```
 
 ## Tech stack
 
-Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. 85 tests in pytest, including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
+Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. 101 tests in pytest, including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
 
 ## Project structure
 
@@ -217,7 +218,7 @@ src/cardinal_nest_monitor/
   evidence.py          Per event evidence directory writer
 
 launchd/               macOS LaunchAgent plists
-tests/                 85 tests (unit + integration)
+tests/                 101 tests (unit + integration)
 evidence/reference/    Curated regression images for species ID validation
 ```
 

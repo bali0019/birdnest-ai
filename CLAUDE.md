@@ -80,7 +80,7 @@ Daily volume at these settings (assuming ~95% on-nest / ~5% absent during day):
 - Day absent (~55 snaps during 1.2h of foraging) ≈ **55 snaps/day**
 - Quiet (6h × 2/h) ≈ **12 scheduled snaps/day**
 - Motion-triggered (Blink motion off) ≈ **0 snaps/day**
-- **Total: ~270 snaps/day**, ~$180-270/mo Anthropic spend (with multi-image analysis on; ~$90/mo if disabled).
+- **Total: ~285 snaps/day**, ~$180-270/mo Anthropic spend (with multi-image analysis on; ~$90/mo if disabled).
 
 ---
 
@@ -118,7 +118,7 @@ data/state.sqlite                             gitignored. Runtime state (observa
 data/spool/                                   gitignored. Atomic-rename spool for downloader→analyzer handoff. See §20.
 evidence/YYYY-MM-DD/                          gitignored. One directory per snap.
 evidence/reference/                           NOT gitignored (intentionally). Hand-curated regression test images for prompt changes — see Hard-won knowledge §15.
-tests/                                        pytest. Run with `python -m pytest tests/`. 56 unit + 22 integration = 83 tests (including spool + backfill guards), all should pass.
+tests/                                        pytest. Run with `python -m pytest tests/`. 74 unit + 27 integration = 101 tests (including spool + backfill guards), all should pass.
 ```
 
 ---
@@ -559,7 +559,7 @@ Anthropic supports multi-image requests natively. The three crops let the model 
 
 **Implementation**: `_image.prepare_multi_image(jpeg)` returns a list of 3 content blocks. `analyzer.analyze()` prepends a caption text block, then all three images, then the optional `extra_user_text` (verifier nudge). When `MULTI_IMAGE_ANALYSIS=false`, falls back to the single-image path.
 
-**Cost**: ~2-3x input tokens per snap. At ~270 snaps/day: ~$180-270/mo (vs ~$90/mo baseline). Toggle with `MULTI_IMAGE_ANALYSIS=false` if spend becomes an issue.
+**Cost**: ~2-3x input tokens per snap. At ~285 snaps/day: ~$180-270/mo (vs ~$90/mo baseline). Toggle with `MULTI_IMAGE_ANALYSIS=false` if spend becomes an issue.
 
 **Opus 4.7 as verifier**: upgraded from 4.6 to 4.7 same day. Better vision, new high-resolution image support. Especially helpful on the detail-heavy center-crop variant.
 
@@ -738,7 +738,7 @@ Knobs in order of smallest impact first:
 
 ## Verifying before claiming "it works"
 
-1. `TEST_MODE=true python -m pytest tests/ -v` → all 83 tests pass (56 unit + 27 integration).
+1. `TEST_MODE=true python -m pytest tests/ -v` → all 101 tests pass (74 unit + 27 integration).
 2. `launchctl list | grep cardinalnest` → both `com.cardinalnest.downloader` and `com.cardinalnest.analyzer` show PIDs + exit code 0.
 3. `tail ~/Library/Logs/cardinal-nest-monitor/downloader.out.log` → `Blink connected; N cameras`, `downloader watchdog started`.
 4. `tail ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log` → `spool consumer started`, `feed_worker started`, `analytics_scheduler started`, `watchdog started`.
