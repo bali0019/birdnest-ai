@@ -136,6 +136,18 @@ Claude Sonnet 4.6 analyzes every snap. When it flags a CRITICAL or HIGH alert, t
 
 The female cardinal and the Brown Thrasher are both brownish birds. The analyzer prompt includes field marks: red crest means cardinal, never a threat; long tail plus streaked breast plus yellow eye means thrasher, always a threat; can't tell means unknown, which still fires an alert, because I would rather get woken up for nothing than miss the real thing.
 
+### Too many pages
+
+On the afternoon of April 17, I was at the kitchen table when my phone started buzzing, and it did not really stop. The cardinal was still on her nest. Nothing bad was happening. The system was firing alerts every five minutes anyway. By the end of the day it had paged me thirty-five times. Twenty of those were real. Seven were not.
+
+The false alarms all had the same shape. The camera looks up at the nest from below and behind. When the cardinal is sitting low in the cup, her red crest, the one feature that separates her from a Brown Thrasher, is hidden. Sometimes by foliage, sometimes by her own posture, sometimes by the edge of the frame. The analyzer would correctly refuse to guess. It would say "brownish bird, species uncertain, cannot confirm crest." And the rules engine, which had been written to be aggressive about both absence and threats, would read that single observation two ways at once. She is not confirmed on the nest, so alert me about absence. A bird is near the nest and cannot be confirmed as safe, so alert me about predation. One frame, two pages, neither one correct.
+
+I fixed this by naming the state. An ambiguous bird in the cup is no longer absence or threat. It is its own category. The first frame that matches the pattern gets held quietly, waiting. The second consecutive frame within ten minutes resolves the ambiguity in her favor: probably her. The system updates its model, clears the absence clock, and says nothing. A real thrasher, with streaked breast and long tail actually visible, still fires on a single frame. An unknown bird with its beak reaching inside the nest cup still fires on a single frame. Only the specific case of "something in the cup, no features I can trust" gets held for a second opinion from the next snap.
+
+The same day, the system also fired a CRITICAL alert about an egg count dropping from two to one. She was still sitting on all of her eggs. The analyzer had miscounted the one brief moment it could see into the cup. That made me realize the deeper problem: this camera does not actually have a reliable view of the eggs. They sit underneath the mother or tucked behind the rim, and any egg count the analyzer produces is a guess about something the camera cannot see. I turned egg-count alerts off entirely. The rule is still in the code, behind a configuration flag, for a future camera that can see into the cup from above. For this one, it is silent.
+
+The day after the fix, alerts dropped from thirty-five to twenty-eight. The seven false ones were gone. The real ones still arrived.
+
 ### Five Discord channels
 
 | Channel | Purpose |
@@ -154,7 +166,7 @@ The female cardinal and the Brown Thrasher are both brownish birds. The analyzer
 | Monthly cost (Anthropic) | ~$180-270 (multi-image on) |
 | Camera battery life | 10 to 14 days |
 | Lifecycle stages tracked | 6 |
-| Tests in the suite | 156 |
+| Tests in the suite | 192 |
 | Reaction time in the burst window (first 3 min after she leaves) | Under 30 seconds |
 | Reaction time when she's away (after burst) | Under a minute |
 | Reaction time when she's home | Under five minutes |
@@ -217,7 +229,7 @@ launchctl list | grep cardinalnest
 ```bash
 source venv/bin/activate
 TEST_MODE=true python -m pytest tests/ -v
-# 156 tests. All must pass before deploying any change.
+# 192 tests. All must pass before deploying any change.
 ```
 
 ## Running it locally
@@ -308,12 +320,13 @@ Most of the `.env` is set-and-forget. The handful that change the shape of the s
 | `DISCORD_BACKFILL_WEBHOOK_URL` | Routes alerts on stale snaps (analyzer-recovery backlog) to a separate channel tagged `[BACKFILL +Nm]`. Empty = backfill alerts are suppressed entirely |
 | `DISCORD_TEST_WEBHOOK_URL` | Required for the integration test suite. Every `[TEST]` embed routes here so production channels stay clean |
 | `MULTI_IMAGE_ANALYSIS` | Default `true`. Sends three crops per snap (full + center-zoom + overview) for better recall on subtle thrasher features. Disable to halve Anthropic spend at the cost of recall |
+| `ENABLE_EGG_COUNT_ALERTS` | Default `false` on this camera. Turns on the CRITICAL egg-count-dropped rule. Off because this camera cannot reliably see into the cup from below/behind. Flip to `true` only if you install a top-down camera with a clear view of the eggs |
 
 See [`.env.example`](./.env.example) for the full list with documentation.
 
 ## Tech stack
 
-Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos, on five separate channels. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. 156 tests in pytest, including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
+Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos, on five separate channels. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. 192 tests in pytest, including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
 
 ## Project structure
 
@@ -342,7 +355,7 @@ src/cardinal_nest_monitor/
     test_discord.py          Webhook smoke test
 
 launchd/               macOS LaunchAgent plists
-tests/                 156 tests (unit + integration)
+tests/                 192 tests (unit + integration)
 evidence/reference/    Curated regression images for species ID validation
 ```
 

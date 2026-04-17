@@ -964,6 +964,46 @@ The `_IR_MODE_PHRASES` allowlist in `events.py::observation_indicates_ir_mode` m
 
 ---
 
+### 29. 2026-04-17 false-alarm hotfix: crest-hidden cardinal + egg-count unreliable
+
+**Incident.** On 2026-04-17 production fired 35 alerts in a single day: 1 CRITICAL, 1 HIGH, 25 MEDIUM, 8 LOW. Seven of those were structurally false: 1 CRITICAL (egg_loss miscount on day 3-4 of incubation), 1 HIGH (crest-hidden cardinal classified as "unknown bird at nest"), and 5 MEDIUMs on frames where the cardinal was visibly in the cup but the analyzer couldn't confirm species. Root cause: the camera's low below/behind angle hides the cardinal's crest when she sits low, so Sonnet correctly returns `cardinal_on_nest="uncertain"` + `threat_species=["unknown"]`. The rules engine treated that ambiguous-bird-at-cup frame two ways at once — as absence (not confirmed true → MEDIUM `long_absence`) AND as threat (unknown + near_nest → HIGH `predator_near_nest`).
+
+**Shipped fixes.** Three commits on `origin/main` (no analyzer prompt change — see §29d):
+
+- `5b9be69` — Verifier content-aware suppression (Track 2). `verifier.py::is_cardinal_positive_no_threat(opus_obs)` returns True when Opus's `species_detected` contains "cardinal" AND `threat_species_detected` is empty. Short-circuits to `(None, opus_obs)` before the severity-rank comparison. This closes the 14:56 failure mode where Opus correctly identified the cardinal but had ALSO set `direct_nest_interaction=true` (schema violation on cardinal) → Opus's rule output CRITICAL-rank ≥ Sonnet HIGH → verifier confirmed the false HIGH.
+
+- `f5b44be` — Rules+state hotfix (Tracks 1+4). Five changes:
+
+  - **§29a ENABLE_EGG_COUNT_ALERTS flag** (`config.py`, `.env.example`, `events.py` rule 2). Default `false` on this deployment. Rule 2 egg_loss is silenced entirely — the camera cannot see into the cup reliably (eggs sit underneath the mother, or are occluded by the rim from the below/behind angle). Rule stays in code for a hypothetical future top-down camera; flip `ENABLE_EGG_COUNT_ALERTS=true` in `.env` to re-enable.
+
+  - **§29b direct_nest_interaction invariant** (`events.py` rule 1). Rule 1 now requires `threat_species_detected` to be non-empty. A cardinal-positive observation with `direct_nest_interaction=true` (a schema violation by the analyzer — that field is defined for non-cardinal animals) can no longer produce a false CRITICAL on the cardinal's own tending behavior. Defense-in-depth alongside the §29 verifier suppression.
+
+  - **§29c ambiguous-occupied-cup path** (`events.py::is_ambiguous_occupied_cup`, `state.py::record`, new `pending_ambiguous_frame_ts` column). Predicate: `nest_visible=true` AND `near_nest_activity=true` AND `cardinal_on_nest="uncertain"` AND `direct_nest_interaction=false` AND no NAMED threat species. When a frame matches, `evaluate()` returns `None` (no MEDIUM, no HIGH, no lifecycle transitions) and `state.py::record` stores the ts as a pending candidate. A second consecutive matching frame within 10 minutes (`_AMBIGUOUS_CONFIRM_WINDOW_S`) promotes to soft presence: clears `in_absence`, updates `last_mother_seen_ts`, clears pending. An unambiguous frame (clear cardinal / clear empty / named threat) clears the pending immediately. Load-bearing guardrails: (1) named threats bypass this path and fire threat rules directly; (2) `direct_nest_interaction=true` bypasses this path so unknown-species beak-in-cup still reaches CRITICAL; (3) the ambig early-return runs BEFORE `_lifecycle_event` so ambig frames can't leak into fledge/hatch detection.
+
+  - **§29d chick confidence floor raised to 0.75** (`state.py::_CHICK_SIGHTING_CONFIDENCE_FLOOR`, both `state.py::record` and `events.py::_lifecycle_event` check this). Also: `mother_feeding_chicks=true` alone no longer counts as a chick signal for lifecycle advancement — only explicit `chicks_visible="true"` at ≥0.75 does. Prevents reddish-blob misreads at day 3-4 of incubation from creating a stale `first_chick_sighting_ts` that would bypass the 2-sighting guard on a real later hatch. (See §23 for the 2-sighting guard.) `mother_feeding_chicks=true` still records `last_feeding_event_ts` for the 30-min MEDIUM suppression during the feeding stage.
+
+  - **§29e schema migration for `pending_ambiguous_frame_ts`** (`state.py::_SCHEMA_SQL` + `_migrations`). Idempotent ALTER TABLE path following the established pattern. New `tests/test_state_migration.py` covers the migration against a pre-column DB shape (not just a fresh scratch DB — Codex guardrail).
+
+- `5c58bcb` — Chronological stateful replay (Track 5). `tests/integration/test_replay_2026_04_17.py` walks `evidence/2026-04-17/*` in ts order against a fresh scratch `StateStore`, calls `record()` + `record_alert()` per snap, and simulates the verifier using stored `verification.json` when present. 14 per-evidence-dir assertions verify specific false positives are now `None` and positive controls (mother_returned LOWs, genuine empty-nest MEDIUMs) still fire. Zero Anthropic API cost on replay — re-runnable.
+
+**Don't regress** (these interact; all three must hold):
+
+- The ambig-cup predicate MUST exclude `direct_nest_interaction=true` and any named threat species. Otherwise a single-frame real attack (unknown-species thrasher with beak in cup) gets silently suppressed. Codex P1 guardrail.
+- The ambig-cup early-return in `evaluate()` MUST run BEFORE `_lifecycle_event()`. Otherwise crest-hidden frames can trigger fledge detection during feeding stage (cardinal_on_nest != "true" is a fledge precondition). Codex P2 guardrail.
+- The verifier's content-aware override MUST check `threat_species_detected` is empty before suppressing. Otherwise a mixed "cardinal + thrasher" frame (thrasher chasing cardinal off the nest) gets silently suppressed.
+
+**Impact verification.** The replay test compares pre-fix production alerts against post-fix decisions:
+
+  Before: 35 alerts (1 CRITICAL, 1 HIGH, 25 MEDIUM, 8 LOW).
+  After:  28 alerts (0 CRITICAL, 0 HIGH, 20 MEDIUM, 8 LOW).
+  Net:    7 false alerts eliminated; zero real events suppressed.
+
+**Deferred — Track 3 analyzer prompt rewrite.** An in-progress Bayesian prior ("bird sitting IN the cup + no thrasher features → cardinal by default") was held back from this hotfix because it over-corrected on `wm_mom_returning_02.jpg` in the lifecycle regression suite (got `cardinal_on_nest="true"` at 0.62 where expected was `"uncertain"`). Will re-ship once the prior is narrowed (require at least ONE partial cardinal feature or specific camera geometry) and the 13-image regression passes 13/13. Until then, a smaller class of false MEDIUMs remains — specifically frames where the analyzer's `near_nest_activity=false` disagrees with its own summary text ("bird in cup"). Example: 2026-04-17 13:15 and 13:20. The rules engine correctly trusts the structured field; only prompt tightening can fix this class.
+
+**Operational clean-up that self-expired.** The 2026-04-17 15:23:26 false chick sighting recorded a stale `first_chick_sighting_ts` in production state. The existing 2-sighting guard's 4-hour window auto-invalidated it at 19:23:26 EDT — no manual DB cleanup was required. If a similar false sighting appears in the future AND a real hatch follows within 4 hours, the §29d raised confidence floor (0.75) makes that re-occurrence much less likely.
+
+---
+
 ## Cost levers (when daily heartbeat shows spend climbing)
 
 Current realistic spend at the 2026-04-15 settings (single-tier Sonnet, 5/1/30 min dynamic cadence): **~$90/month**. Heartbeat reports cost-to-date.
@@ -1001,7 +1041,7 @@ Knobs in order of smallest impact first:
 
 ## Verifying before claiming "it works"
 
-1. `TEST_MODE=true python -m pytest tests/ -v` → all 156 tests pass (125 unit + 31 integration). Includes the lifecycle 6-stage tests, IR-mode suppression tests, the codex round-1 regression guards (stale-snap, nest_visible, confidence filter, downloader cadence), the round-2 backfill-eval guards, the round-3 analytics IR-coercion guards, the round-4 cooldown-future-blindness + verifier-is_backfill guards, and the round-5 rule-scoped-cooldown guards (lifecycle LOW no longer silences mother_returned).
+1. `TEST_MODE=true python -m pytest tests/ -v` → all 192 tests pass (154 unit + 38 integration). Includes the lifecycle 6-stage tests, IR-mode suppression tests, the codex round 1-5 regression guards, and the 2026-04-17 false-alarm hotfix coverage (§29): ENABLE_EGG_COUNT_ALERTS flag, direct_nest_interaction invariant, ambiguous-occupied-cup path (predicate + pending state + soft presence), chick confidence floor 0.75, schema migration test, verifier content-aware suppression, and the chronological stateful replay of the full 2026-04-17 production day.
 2. `launchctl list | grep cardinalnest` → both `com.cardinalnest.downloader` and `com.cardinalnest.analyzer` show PIDs + exit code 0.
 3. `tail ~/Library/Logs/cardinal-nest-monitor/downloader.out.log` → `Blink connected; N cameras`, `downloader watchdog started`.
 4. `tail ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log` → `spool consumer started`, `feed_worker started`, `analytics_scheduler started`, `watchdog started`.
