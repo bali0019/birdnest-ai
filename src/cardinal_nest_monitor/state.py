@@ -610,6 +610,38 @@ class StateStore:
             return False
         return (ref - float(row["latest"])) < window_s
 
+    def rule_cooldown_active(
+        self,
+        rule_id: str,
+        window_s: int,
+        ts: float | None = None,
+    ) -> bool:
+        """True if a prior alert with the same `rule_id` exists within
+        `window_s` seconds before `ts` (defaulting to now).
+
+        Codex P2 round 5: mother_returned and lifecycle alerts (hatch,
+        fledge, egg_laying_begin, incubation_begin) need rule-scoped
+        cooldowns rather than severity-scoped. cooldown_active() keys
+        off severity + species and would either over-suppress (a LOW
+        hatch alert silencing a real mother_returned) or never match
+        at all (lifecycle alerts have empty species, so the species
+        match always failed silently — state-machine gating was the
+        only thing preventing double-fires there).
+
+        Constrains the SQL to `ts <= ref` so during backfill drain a
+        future alert can't suppress a legitimate older one.
+        """
+        ref = ts if ts is not None else time.time()
+        cur = self._conn.execute(
+            "SELECT MAX(ts) AS latest FROM alerts "
+            "WHERE rule_id = ? AND ts <= ?",
+            (rule_id, ref),
+        )
+        row = cur.fetchone()
+        if row is None or row["latest"] is None:
+            return False
+        return (ref - float(row["latest"])) < window_s
+
     def latest_alert_for_species(
         self,
         species: str | None,

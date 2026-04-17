@@ -174,7 +174,15 @@ def _lifecycle_event(
         and observation.cardinal_on_nest == "true"
     ):
         sev = Severity.LOW
-        if not _cooldown_blocks(store, sev, "egg_laying_begin", 24 * 3600, ts):
+        # Rule-scoped cooldown (Codex P2 round 5). The previous
+        # _cooldown_blocks(..., "egg_laying_begin", ...) was passing the
+        # rule_id as the SPECIES argument — and lifecycle alerts have
+        # empty species, so the species match never fired and this
+        # cooldown was silently dead. State-machine gating (one-way
+        # building_nest → egg_laying transition) was the actual gate.
+        # Switching to rule_cooldown_active makes the belt-and-suspenders
+        # actually work.
+        if not store.rule_cooldown_active("egg_laying_begin", 24 * 3600, ts=ts):
             return AlertDecision(
                 severity=sev,
                 title="🥚 Egg laying has begun",
@@ -216,7 +224,7 @@ def _lifecycle_event(
             ratio = confident_on_nest / confident_total
             if ratio >= 0.70:
                 sev = Severity.LOW
-                if not _cooldown_blocks(store, sev, "incubation_begin", 24 * 3600, ts):
+                if not store.rule_cooldown_active("incubation_begin", 24 * 3600, ts=ts):
                     return AlertDecision(
                         severity=sev,
                         title="🪺 Incubation has begun",
@@ -248,7 +256,7 @@ def _lifecycle_event(
         )
         if is_confirmation:
             sev = Severity.LOW
-            if not _cooldown_blocks(store, sev, "hatch", 24 * 3600, ts):
+            if not store.rule_cooldown_active("hatch", 24 * 3600, ts=ts):
                 return AlertDecision(
                     severity=sev,
                     title="🐣 Chicks hatched!",
@@ -274,7 +282,7 @@ def _lifecycle_event(
         and observation.cardinal_on_nest != "true"  # confirm cardinal is absent NOW
     ):
         sev = Severity.LOW
-        if not _cooldown_blocks(store, sev, "fledge", 24 * 3600, ts):
+        if not store.rule_cooldown_active("fledge", 24 * 3600, ts=ts):
             return AlertDecision(
                 severity=sev,
                 title="🦅 Chicks fledged!",
@@ -502,7 +510,12 @@ def evaluate(
         # a negative absence_seconds — non-sensical alert).
         and ts >= state.last_mother_seen_ts
     ):
-        if not store.cooldown_active(Severity.LOW, None, _MOTHER_RETURN_COOLDOWN, ts=ts):
+        # Rule-scoped cooldown (Codex P2 round 5): was previously keyed to
+        # any LOW alert, which let unrelated lifecycle LOWs (hatch, fledge,
+        # egg_laying_begin, incubation_begin) silently suppress a real
+        # mother_returned alert for 5 minutes. Codex repro: a LOW hatch
+        # alert 10s before a valid return-to-nest frame returned None.
+        if not store.rule_cooldown_active("mother_returned", _MOTHER_RETURN_COOLDOWN, ts=ts):
             sev = Severity.LOW
             return AlertDecision(
                 severity=sev,

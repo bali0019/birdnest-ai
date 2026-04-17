@@ -923,6 +923,20 @@ If you ever extend the IR-phrase allowlist in `events.py::_IR_MODE_PHRASES`, you
 
 **Don't regress.** The pipeline's `is_backfill` flag MUST flow into both `evaluate()` AND `verify_alert()` for every stale snap; cooldown queries MUST include `WHERE ts <= ref_ts`. These three checks are coupled — a stale snap should see the same set of "as-of" history in evaluate, in verify, and in cooldown lookups, or backfill behavior diverges silently across paths. If you find yourself adding a new alert-history query, it MUST take a `ts` parameter and constrain SQL to `ts <= that`.
 
+**Round-5 follow-up (rule-scoped cooldowns, 2026-04-17):** Codex reproduced a real over-suppression bug AND surfaced an adjacent dormant bug:
+
+- *mother_returned over-suppressed by unrelated LOW alerts.* Rule 5 called `cooldown_active(Severity.LOW, None, _MOTHER_RETURN_COOLDOWN, ts)` — that checks the most recent LOW alert of *any* kind. So a celebratory lifecycle LOW (hatch, fledge, egg_laying_begin, incubation_begin) silently suppressed real "mom is back" alerts for 5 minutes. Codex repro: a LOW hatch alert 10s before a valid return frame returned None.
+- *Lifecycle cooldowns were silently dead.* The four lifecycle-alert sites used `_cooldown_blocks(store, sev, "hatch", ...)` (etc.) which calls `latest_alert_for_species(species, ...)` with the rule_id passed as the species argument. Lifecycle alerts have empty species lists → the species column is NULL → no row ever matched → cooldown was effectively never active. The one-way state-machine transitions in `state.py::record()` were the only thing preventing double-fires. Today's behavior is correct because of that, but the cooldown was load-bearing only on paper — any change to the state machine that re-allowed re-entry would have produced alert spam.
+
+Fix: new `state.rule_cooldown_active(rule_id, window_s, ts)` that queries `WHERE rule_id = ? AND ts <= ?`. Switched all 5 sites to it: rule 5 mother_returned + the 4 lifecycle alerts. Rule-scoped cooldowns are now actually rule-scoped, and the dormant bug becomes a real working belt-and-suspenders.
+
+3 new regression tests in `tests/test_cooldown.py`:
+- `test_lifecycle_low_does_not_silence_mother_returned` (Codex's exact repro)
+- `test_mother_returned_self_cooldown_still_works` (negative control: same rule still suppressed within window)
+- `test_rule_cooldown_active_basic` (direct helper test: same rule blocked, different rule not blocked, future alert ignored)
+
+**Don't go back to severity-scoped cooldowns** for rule-specific alerts. The general principle: if the cooldown's intent is "don't re-fire THIS rule too often", scope to rule_id. If it's "don't re-fire ANY alert of this severity for this species too often" (the original Brown-Thrasher-spam guard for rules 1-3), keep severity+species scoping. The two patterns coexist in `state.py` and serve different bugs.
+
 ---
 
 ### 27. Cost estimate now accounts for multi-image + verifier (2026-04-17)
@@ -987,7 +1001,7 @@ Knobs in order of smallest impact first:
 
 ## Verifying before claiming "it works"
 
-1. `TEST_MODE=true python -m pytest tests/ -v` → all 153 tests pass (122 unit + 31 integration). Includes the lifecycle 6-stage tests, IR-mode suppression tests, the codex round-1 regression guards (stale-snap, nest_visible, confidence filter, downloader cadence), the round-2 backfill-eval guards, the round-3 analytics IR-coercion guards, and the round-4 cooldown-future-blindness + verifier-is_backfill guards.
+1. `TEST_MODE=true python -m pytest tests/ -v` → all 156 tests pass (125 unit + 31 integration). Includes the lifecycle 6-stage tests, IR-mode suppression tests, the codex round-1 regression guards (stale-snap, nest_visible, confidence filter, downloader cadence), the round-2 backfill-eval guards, the round-3 analytics IR-coercion guards, the round-4 cooldown-future-blindness + verifier-is_backfill guards, and the round-5 rule-scoped-cooldown guards (lifecycle LOW no longer silences mother_returned).
 2. `launchctl list | grep cardinalnest` → both `com.cardinalnest.downloader` and `com.cardinalnest.analyzer` show PIDs + exit code 0.
 3. `tail ~/Library/Logs/cardinal-nest-monitor/downloader.out.log` → `Blink connected; N cameras`, `downloader watchdog started`.
 4. `tail ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log` → `spool consumer started`, `feed_worker started`, `analytics_scheduler started`, `watchdog started`.
