@@ -808,6 +808,59 @@ find evidence -mtime +14 -delete     # delete event dirs older than 14 days
 
 ---
 
+### 24. IR-mode suppression for false MEDIUM in the sunset→quiet-hours gap (2026-04-16)
+
+**Incident:** on the evening of 2026-04-16 the urgent channel fired a MEDIUM "Mother away from nest for 30+ minutes" at 20:48 EDT. The cardinal was actually on the nest. Sonnet correctly returned `cardinal_on_nest="uncertain"` at 0.62 confidence with a summary that explicitly said *"A compact bird is settled low in the nest cup at night in IR mode … body posture and size are consistent with the incubating female cardinal, but the crest is not clearly visible and species cannot be confirmed."* Sonnet wasn't wrong — it was being appropriately cautious about grayscale ID. The rules engine was wrong.
+
+**Root cause:** the Blink Outdoor camera switches to IR at sunset (~20:00 in April-Atlanta). Our `QUIET_HOURS` wall-clock window doesn't start until 23:00. That leaves a ~3-hour gap where IR is on, the cardinal is hard to ID in grayscale, and the old rule 4 suppression (clock-gated) doesn't apply. The absence counter keeps climbing from the last confident sighting (20:16 in this case), crosses the 5-min threshold, and MEDIUM fires.
+
+**Fix:** new helper `events.observation_indicates_ir_mode(obs)` checks the analyzer's own summary text for phrases like *"IR mode"*, *"infrared"*, *"grayscale IR"*, *"night IR"*, *"night vision"*. The long_absence rule now suppresses on IR-detected in addition to clock-gated quiet hours. Matching IR-mode guard added to `state.py::record()` so the confidence floor for `in_absence` flips rises from 0.55 to 0.75 during IR mode too.
+
+**Why text-based detection and not JPEG-grayscale detection:** Sonnet consistently mentions IR/grayscale when the image is in IR (observed across every 2026-04-16 evening snap). Text detection is free (no decode), reliable, and doesn't require a schema or prompt change. JPEG-grayscale detection would also work but costs more complexity for marginal robustness gains.
+
+**Don't regress.** A future Claude tempted to "clean up" the `_IR_MODE_PHRASES` list should note: these are the phrases Sonnet actually produced in evidence/2026-04-16/20-*_MEDIUM_unknown_bird/observation.json. Removing a phrase re-opens the false MEDIUM window. If Sonnet starts using a new phrasing, ADD to the list — don't replace.
+
+---
+
+### 25. Correctness guardrails from the 2026-04-16 codex review
+
+Three independent correctness bugs Codex flagged after the lifecycle expansion shipped. All four P1/P2 findings are fixed:
+
+**a) Stale-snap protection in `state.py::record()` (Codex P1).**
+The spool claims newest-first (`spool.claim_next`), so during analyzer recovery after downtime, older snaps can be processed AFTER newer ones. Without a guard, an old backfilled snap would overwrite the single-row derived state — rolling `in_absence` back, clearing `absence_started_ts`, regressing `lifecycle_stage` — until the next live snap lands. The downloader reads this state for cadence, so recovery could briefly run on stale truth.
+
+Fix: at the top of `record()`, query `MAX(ts) FROM observations`. If the incoming `ts < latest`, insert the observation for history but SKIP the UPDATE state step entirely. Events.py still runs against pre-state and can fire backfill alerts through the normal `[BACKFILL +Nm]` routing.
+
+Don't regress by "simplifying" to always-update. The stale-snap guard is why the downloader's cadence can trust `in_absence` even when an old snap lands in the middle of a burst window.
+
+**b) `nest_visible` guard on lifecycle transitions (Codex P2).**
+`events.py::_lifecycle_event` ran before the universal smart-filter gate, and `state.py::record()`'s lifecycle block didn't require a nest-visible frame either. A yard-motion or obscured frame where `cardinal_on_nest != "true"` could therefore emit a false `fledge` alert, and state could advance on a non-nest frame.
+
+Fix: both paths now require `observation.nest_visible=True` before evaluating or transitioning. If the analyzer can't see the nest in this frame, that frame can't advance lifecycle state.
+
+**c) Proper confidence filter in the 24h sitting-ratio scan (Codex P2).**
+The scan documentation claimed "≥ 0.55 confidence" but the implementation was `'"confidence":' in oj` — a substring check that accepted every row because `model_dump_json()` always includes the field. Low-confidence IR misreads therefore contributed to the ratio and could trigger `egg_laying → incubation` prematurely. Same bug was in `tools/lifecycle_backfill.py`.
+
+Fix: new `_row_passes_confidence(oj, floor=0.55)` in `state.py` parses the float via regex (`r'"confidence":([0-9]*\.?[0-9]+)'`). Both `state.py::record`, `events.py::_lifecycle_event`, and `lifecycle_backfill.py` share this helper.
+
+Post-fix re-run of the backfill on the production DB returned the SAME window (2026-04-14 05:48, 74%, n=91) — the old substring check happened to coincide with the proper filter because every production observation already had confidence ≥ 0.55 naturally. No data correction needed, but the bug would have mattered under different conditions.
+
+**d) Downloader 10s cadence wait (Codex P2).**
+`snap_loop()` always waits up to 10s for `state_updated` after each snap (preserves Pattern A absence-aware cadence on the analyzer side), but downloader-role `on_snap` never set the event. Every downloader cycle burned the full 10s wait before computing the next interval — silently making real burst/absence cadence 10s slower than configured.
+
+Fix: downloader `on_snap` now `.set()`s `state_updated` in a `finally` block (even on error). Downloader has nothing to wait for (no analyzer-side state), so setting immediately is correct.
+
+**Testing.** 5 new regression tests in `tests/test_lifecycle.py`:
+- `test_lifecycle_event_skips_frames_without_nest_visible`
+- `test_lifecycle_transition_skipped_when_nest_not_visible`
+- `test_low_confidence_rows_excluded_from_sitting_ratio`
+- `test_stale_snap_inserted_but_does_not_touch_derived_state`
+- `test_stale_snap_does_not_regress_lifecycle_stage`
+
+140/140 tests pass post-fix. **Never regress the stale-snap guard or the nest_visible gate** — both protect against classes of silent state-rollback bugs that are easy to re-introduce during "simplification."
+
+---
+
 ## Cost levers (when daily heartbeat shows spend climbing)
 
 Current realistic spend at the 2026-04-15 settings (single-tier Sonnet, 5/1/30 min dynamic cadence): **~$90/month**. Heartbeat reports cost-to-date.

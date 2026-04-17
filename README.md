@@ -90,6 +90,8 @@ The result was ten to fifteen false "mom is gone" alerts every night. She was th
 
 The fix had three parts. First, I added explicit IR guidance to the prompt: if the image is grayscale, default to "uncertain" rather than "absent," because you cannot reliably tell. Second, I suppressed the absence alerts entirely during quiet hours, because a cardinal leaving her nest at 2 AM to forage is not a real scenario. Third, I raised the confidence threshold for overnight state changes, so a low confidence "empty nest" reading from an IR image would not trigger the system to start snapping every sixty seconds and burning through camera battery for nothing.
 
+That was almost right. The camera switches to infrared at sunset, but the quiet hours window did not start until eleven at night. For three hours in the evening the system was in the blind spot it had been designed to handle, and it fired the same false alert the overnight fix was supposed to prevent. I changed the suppression to key off the model's own description instead of the wall clock. When Sonnet says the image is in IR or infrared or grayscale, the system treats it the same way it treats the middle of the night.
+
 The predator alerts still fire overnight. A raccoon at the nest at 3 AM is a real threat and the system needs to catch it. But the "where is mom" logic learned to admit what it cannot see.
 
 ### Catching a four-second attack
