@@ -22,7 +22,7 @@ It took some reading to understand what was happening. Female cardinals lay one 
 
 The system did not know this. It fired absence alerts all night, every night, for the first four days. I had built a machine to protect eggs from a thrasher, and the first thing it did was convince me the mother had abandoned them.
 
-So I taught it what a cardinal's spring actually looks like. The nest moves through six stages, from `building_nest` to `egg_laying` to `incubation` to `feeding` to `fledging` to `empty`, and the system watches the observations pile up and figures out where she is in the arc. When twenty four hours of snaps show her sitting roughly seven times out of ten, it concludes incubation has begun. When a chick's open mouth appears above the rim of the cup, it moves to feeding. When she stops visiting for most of a day, it calls it a fledge. Each transition gets a quiet note in a dedicated Discord channel, a cardinal icon and a one line summary, no alarm. The `egg_laying` stage is the one that ended the overnight panic: while she is still laying, absence at night is expected, and the system holds its fire.
+So I taught it what a cardinal's spring actually looks like. The system now tracks six stages, from nest building through laying and incubation and feeding all the way to the day the chicks fledge. The stage that mattered most was the laying one. Once the system knows she is still laying, it understands that an empty cup at three in the morning is the female cardinal doing exactly what she is supposed to be doing, and it stops paging me about it.
 
 The status badge at the top of this page updates as she moves through these stages.
 
@@ -112,13 +112,31 @@ Second, **multi-image analysis**. Each snap now goes to the analyzer as three cr
 
 Together these changes compound. The system gets more chances to see an attack happening, and each chance has more detail to work with. The thrasher has to slip past both to succeed.
 
+### Tracking the lifecycle
+
+The early version of the system had no concept of time. A snap was a snap. Was she on the nest, or wasn't she. A predator was either there or not. The state machine had two states and they flickered.
+
+That was enough for the first job, which was catching a thrasher at the cup. It was not enough for everything else. The system did not know that a cardinal at the very beginning of nesting season visits her cup once a day for ten seconds and then leaves for fourteen hours, and that this is normal, and that the alarm it kept firing was wrong. It did not know that a cardinal in the middle of incubation almost never leaves the nest, and that any extended absence late in May would mean something has gone wrong.
+
+So I gave it a calendar.
+
+The system now tracks six stages in order: building the nest, laying eggs, incubating them, feeding chicks, fledging, then empty. The transitions are inferred from observation, not declared by hand. When twenty four hours of snaps show her sitting roughly seven times out of ten, the system concludes incubation has begun. When a chick's open mouth appears above the rim of the cup on two separate frames within a four hour window, it moves to feeding. When she stops visiting the nest for most of a day, with no predator seen anywhere nearby in the previous two days, it calls it a fledge.
+
+The two-sighting rule for hatching is deliberate. The analyzer occasionally misreads a shadow or a clump of straw as a hatchling, and a single noisy frame should not move the calendar forward. Two confirming frames within four hours is the threshold I settled on. It costs me a few minutes of latency on the actual hatch announcement and it costs me nothing at all in false alarms.
+
+Each transition gets a quiet note in a dedicated Discord channel, separate from the alerts. The egg-laying announcement, the incubation announcement, the hatch announcement, the fledge announcement: short, gentle, one line each. They share a channel because they share a tone. None of them ever require action.
+
+The daily heartbeat now includes a day counter. "Incubation, Day 4 of about 12." It tells me where we are without my having to count it out.
+
+When I started monitoring this brood the cardinal was already past the building stage and partway through laying. A small backfill tool walks the observation history and infers when each transition happened, so the day counter starts from a real date instead of from when I happened to install the camera. For this brood it set incubation as having started on April 14th.
+
 ### Two model verification
 
 Claude Sonnet 4.6 analyzes every snap. When it flags a CRITICAL or HIGH alert, the system runs a blind second opinion through Opus 4.7. Same image, same prompt, no hint of what Sonnet said. This is not confirmation bias; it is an independent evaluation. Opus can suppress, downgrade, or confirm.
 
 The female cardinal and the Brown Thrasher are both brownish birds. The analyzer prompt includes field marks: red crest means cardinal, never a threat; long tail plus streaked breast plus yellow eye means thrasher, always a threat; can't tell means unknown, which still fires an alert, because I would rather get woken up for nothing than miss the real thing.
 
-### Four Discord channels
+### Five Discord channels
 
 | Channel | Purpose |
 |---|---|
@@ -126,6 +144,7 @@ The female cardinal and the Brown Thrasher are both brownish birds. The analyzer
 | **#nest-feed** | Every snap with Claude's full analysis. Watch the AI reason in real time |
 | **#nest-analytics** | Behavior reports every 8 hours: foraging trips, threat counts, time on nest |
 | **#nest-backfill** | Alerts from analyzer downtime, tagged `[BACKFILL +Nm]`. Keeps #alerts clean |
+| **#cardinal-lifecycle-changes** | Stage transitions only: laying begins, incubation begins, hatch, fledge. Celebration only, never an alarm |
 
 ## By the numbers
 
@@ -134,7 +153,8 @@ The female cardinal and the Brown Thrasher are both brownish birds. The analyzer
 | Snaps per day | ~285 |
 | Monthly cost (Anthropic) | ~$180-270 (multi-image on) |
 | Camera battery life | 10 to 14 days |
-| Tests in the suite | 101 |
+| Lifecycle stages tracked | 6 |
+| Tests in the suite | 156 |
 | Reaction time in the burst window (first 3 min after she leaves) | Under 30 seconds |
 | Reaction time when she's away (after burst) | Under a minute |
 | Reaction time when she's home | Under five minutes |
@@ -197,12 +217,12 @@ launchctl list | grep cardinalnest
 ```bash
 source venv/bin/activate
 TEST_MODE=true python -m pytest tests/ -v
-# 101 tests. All must pass before deploying any change.
+# 156 tests. All must pass before deploying any change.
 ```
 
 ## Tech stack
 
-Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. 101 tests in pytest, including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
+Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos, on five separate channels. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. 156 tests in pytest, including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
 
 ## Project structure
 
@@ -212,19 +232,26 @@ src/cardinal_nest_monitor/
   verifier.py          Opus 4.7 blind second opinion on threats
   events.py            Rules engine (severity levels, cooldowns, absence tracking)
   state.py             SQLite state (observations, alerts, derived nest state)
-  notifier.py          Discord webhooks (4 channels, severity colored embeds)
+  notifier.py          Discord webhooks (5 channels, severity colored embeds)
   spool.py             Atomic rename file queue between services
   downloader_loop.py   Blink to spool producer
   analyzer_loop.py     Spool to pipeline consumer
-  main.py              Pipeline wiring + watchdog + schedulers
+  main.py              Pipeline wiring + watchdog + schedulers + lifecycle day counter
   analytics.py         Foraging trip detection + behavior reports
   config.py            pydantic settings (.env)
   schema.py            Pydantic models (NestObservation, Severity, AlertDecision)
   blink_client.py      Blink camera connect, snap, motion
   evidence.py          Per event evidence directory writer
+  tools/
+    lifecycle_backfill.py    One shot tool to infer historical lifecycle timestamps
+    lifecycle_regression.py  Real image regression suite for analyzer prompt changes
+    analytics_once.py        Fire a single analytics report on demand
+    dryrun.py                Run the full pipeline against a local JPEG
+    pause.py                 Pause snaps before walking near the nest
+    test_discord.py          Webhook smoke test
 
 launchd/               macOS LaunchAgent plists
-tests/                 101 tests (unit + integration)
+tests/                 156 tests (unit + integration)
 evidence/reference/    Curated regression images for species ID validation
 ```
 
