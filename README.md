@@ -70,8 +70,8 @@ They are separate on purpose. On April 15, 2026, a stuck API call froze the enti
 │  DOWNLOADER              │          │  ANALYZER                    │
 │                          │          │                              │
 │  Blink camera            │  spool   │  Claude Sonnet 4.6           │
-│    snap every 1 to 5 min ├────────→ │    species ID + threat eval  │
-│    save to disk          │          │    Opus 4.7 verification     │
+│    adaptive cadence      ├────────→ │    species ID + threat eval  │
+│    30s / 1m / 5m / 30m   │          │    Opus 4.7 verification     │
 │                          │          │    Discord alerts            │
 │  Never stops.            │          │    feed + analytics          │
 │  Not even during         │          │                              │
