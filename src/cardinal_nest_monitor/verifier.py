@@ -72,6 +72,32 @@ def compute_verification_decision(
     return sonnet_decision
 
 
+def is_cardinal_positive_no_threat(opus_obs: NestObservation) -> bool:
+    """Content-aware check: Opus observation indicates the cardinal AND no threat.
+
+    Returns True when:
+      - "cardinal" appears (case-insensitive substring) in any element of
+        species_detected, AND
+      - threat_species_detected is empty.
+
+    This is a correctness fix for a failure mode seen 2026-04-17: Opus
+    correctly identified the female cardinal (no threat) but set
+    direct_nest_interaction=true (a schema violation for a cardinal), which
+    made Opus's rule-engine output CRITICAL-rank. Pure severity comparison
+    then "confirmed" Sonnet's HIGH — firing a false alert even though Opus
+    had said there was no threat.
+
+    If this is True, the alert should be suppressed regardless of what
+    severity Opus's evaluate() produced.
+    """
+    if opus_obs.threat_species_detected:
+        return False
+    for species in opus_obs.species_detected:
+        if "cardinal" in species.lower():
+            return True
+    return False
+
+
 def should_verify(decision: AlertDecision) -> bool:
     """True if this alert's severity is in the verification set."""
     return decision.severity in _VERIFIED_SEVERITIES
@@ -129,6 +155,23 @@ async def verify_alert(
             sonnet_decision.rule_id,
         )
         return (sonnet_decision, None)
+
+    # Content-aware override (2026-04-17): if Opus positively identified the
+    # cardinal and named no threats, suppress the alert regardless of whether
+    # Opus's rule-engine output would have confirmed Sonnet. This closes the
+    # failure mode where Opus sets direct_nest_interaction=true on the cardinal
+    # (schema violation) and thereby produces a CRITICAL-rank rule output that
+    # would otherwise "confirm" Sonnet's HIGH by pure severity comparison.
+    if is_cardinal_positive_no_threat(opus_obs):
+        log.info(
+            "Opus verification: cardinal-positive no-threat override → "
+            "SUPPRESSED (sonnet wanted %s %s). Opus species=%r, summary=%r",
+            sonnet_decision.severity.value,
+            sonnet_decision.rule_id,
+            opus_obs.species_detected,
+            opus_obs.summary[:120],
+        )
+        return (None, opus_obs)
 
     # Evaluate against the SAME pre-record state that Sonnet's decision used.
     # This keeps the verification apples-to-apples — Opus is re-running the

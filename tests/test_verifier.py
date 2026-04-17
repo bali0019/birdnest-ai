@@ -187,3 +187,207 @@ def test_verify_alert_default_is_backfill_false():
 
     asyncio.run(_run())
     assert captured["is_backfill"] is False
+
+
+# ── Track 2: content-aware suppression (2026-04-17) ────────────────
+
+def test_is_cardinal_positive_no_threat_helper():
+    """Direct unit test of the helper."""
+    from cardinal_nest_monitor.schema import NestObservation
+    from cardinal_nest_monitor.verifier import is_cardinal_positive_no_threat
+
+    def _obs(**overrides):
+        base = dict(
+            mother_cardinal_present="true", cardinal_on_nest="true",
+            eggs_visible="false", egg_count_estimate=None,
+            nest_visible=True, nest_disturbed="false",
+            species_detected=[], threat_species_detected=[],
+            near_nest_activity=False, direct_nest_interaction=False,
+            confidence=0.88, summary="",
+        )
+        base.update(overrides)
+        return NestObservation(**base)
+
+    # Cardinal in species, no threat → True
+    assert is_cardinal_positive_no_threat(_obs(
+        species_detected=["female northern cardinal"],
+        threat_species_detected=[],
+    )) is True
+    # Case-insensitive substring match
+    assert is_cardinal_positive_no_threat(_obs(
+        species_detected=["Northern Cardinal"],
+        threat_species_detected=[],
+    )) is True
+    # No cardinal mentioned → False (no override)
+    assert is_cardinal_positive_no_threat(_obs(
+        species_detected=["unknown bird"],
+        threat_species_detected=[],
+    )) is False
+    # Cardinal AND threat detected → False (threats present, honor them)
+    assert is_cardinal_positive_no_threat(_obs(
+        species_detected=["female northern cardinal", "brown thrasher"],
+        threat_species_detected=["brown_thrasher"],
+    )) is False
+    # Empty species list → False (can't confirm cardinal identity)
+    assert is_cardinal_positive_no_threat(_obs(
+        species_detected=[],
+        threat_species_detected=[],
+    )) is False
+
+
+def test_cardinal_positive_no_threat_opus_suppresses_sonnet_high():
+    """Replays today's 14:56:28 false-HIGH scenario end-to-end.
+
+    Sonnet: unknown brownish bird at nest → HIGH predator_absent.
+    Opus verification: female northern cardinal tending the nest, no
+    threat, but direct_nest_interaction=true (schema violation on the
+    cardinal). Opus's internal evaluate() would produce CRITICAL
+    direct_attack (rank 4 ≥ rank 3 HIGH), which would pre-fix have
+    "confirmed" Sonnet's HIGH. With the content-aware override, the
+    alert must be suppressed.
+    """
+    import asyncio
+    from unittest.mock import patch, AsyncMock, MagicMock
+    from cardinal_nest_monitor.schema import NestObservation, NestState
+    from cardinal_nest_monitor import verifier as verifier_mod
+
+    sonnet_obs = NestObservation(
+        mother_cardinal_present="uncertain", cardinal_on_nest="uncertain",
+        eggs_visible="false", egg_count_estimate=None,
+        nest_visible=True, nest_disturbed="false",
+        species_detected=["unknown brownish bird"],
+        threat_species_detected=["unknown"],
+        near_nest_activity=True, direct_nest_interaction=False,
+        confidence=0.72, summary="Brownish bird at nest, crest not visible.",
+    )
+    # What Opus actually returned (from today's verification.json):
+    opus_obs = NestObservation(
+        mother_cardinal_present="true", cardinal_on_nest="false",
+        eggs_visible="uncertain", egg_count_estimate=None,
+        nest_visible=True, nest_disturbed="false",
+        species_detected=["female northern cardinal"],
+        threat_species_detected=[],  # key: no threat
+        near_nest_activity=False, direct_nest_interaction=True,  # schema violation
+        confidence=0.88,
+        summary="Female cardinal tending the cup.",
+    )
+    sonnet_decision = _decision(Severity.HIGH, "predator_absent")
+    pre_state = NestState()
+    fake_store = MagicMock()
+
+    async def _run():
+        with patch.object(verifier_mod, "analyzer_mod") as mock_analyzer:
+            mock_analyzer.analyze = AsyncMock(return_value=opus_obs)
+            final, _opus = await verifier_mod.verify_alert(
+                jpeg=b"x", sonnet_obs=sonnet_obs,
+                sonnet_decision=sonnet_decision,
+                pre_state=pre_state, store=fake_store, ts=1234.0,
+                verification_model="claude-opus-4-7",
+            )
+            return final
+
+    final = asyncio.run(_run())
+    assert final is None, (
+        "Content-aware override must suppress the alert when Opus identifies "
+        "the cardinal with no threat — even if Opus's rule-engine output "
+        "would be CRITICAL-rank via a schema-violating direct_nest_interaction."
+    )
+
+
+def test_cardinal_positive_with_thrasher_does_not_override():
+    """Negative control: if Opus names BOTH the cardinal AND a threat
+    (e.g. thrasher chasing cardinal off the nest), the override must
+    NOT fire — we still need to alert on the thrasher.
+    """
+    import asyncio
+    from unittest.mock import patch, AsyncMock, MagicMock
+    from cardinal_nest_monitor.schema import NestObservation, NestState
+    from cardinal_nest_monitor import verifier as verifier_mod
+
+    sonnet_obs = NestObservation(
+        mother_cardinal_present="false", cardinal_on_nest="false",
+        eggs_visible="false", egg_count_estimate=None,
+        nest_visible=True, nest_disturbed="false",
+        species_detected=["brown thrasher"],
+        threat_species_detected=["brown_thrasher"],
+        near_nest_activity=True, direct_nest_interaction=True,
+        confidence=0.9, summary="Thrasher at cup.",
+    )
+    opus_obs = NestObservation(
+        mother_cardinal_present="true", cardinal_on_nest="false",
+        eggs_visible="false", egg_count_estimate=None,
+        nest_visible=True, nest_disturbed="false",
+        species_detected=["female northern cardinal", "brown thrasher"],
+        threat_species_detected=["brown_thrasher"],  # key: still present
+        near_nest_activity=True, direct_nest_interaction=True,
+        confidence=0.88, summary="Cardinal nearby, thrasher at cup.",
+    )
+    sonnet_decision = _decision(Severity.CRITICAL, "direct_attack")
+    pre_state = NestState()
+    fake_store = MagicMock()
+
+    async def _run():
+        with patch.object(verifier_mod, "analyzer_mod") as mock_analyzer, \
+             patch.object(verifier_mod, "evaluate",
+                          return_value=_decision(Severity.CRITICAL, "direct_attack")):
+            mock_analyzer.analyze = AsyncMock(return_value=opus_obs)
+            final, _opus = await verifier_mod.verify_alert(
+                jpeg=b"x", sonnet_obs=sonnet_obs,
+                sonnet_decision=sonnet_decision,
+                pre_state=pre_state, store=fake_store, ts=1234.0,
+                verification_model="claude-opus-4-7",
+            )
+            return final
+
+    final = asyncio.run(_run())
+    assert final is not None, (
+        "Override must not fire when a threat species is also present; "
+        "the thrasher alert must still go through."
+    )
+    assert final.severity == Severity.CRITICAL
+
+
+def test_cardinal_override_suppresses_critical_too():
+    """Content override must work for CRITICAL just as for HIGH."""
+    import asyncio
+    from unittest.mock import patch, AsyncMock, MagicMock
+    from cardinal_nest_monitor.schema import NestObservation, NestState
+    from cardinal_nest_monitor import verifier as verifier_mod
+
+    sonnet_obs = NestObservation(
+        mother_cardinal_present="uncertain", cardinal_on_nest="uncertain",
+        eggs_visible="false", egg_count_estimate=None,
+        nest_visible=True, nest_disturbed="false",
+        species_detected=["unknown bird"],
+        threat_species_detected=["unknown"],
+        near_nest_activity=True, direct_nest_interaction=True,
+        confidence=0.72, summary="Unknown bird with beak in cup.",
+    )
+    opus_obs = NestObservation(
+        mother_cardinal_present="true", cardinal_on_nest="true",
+        eggs_visible="false", egg_count_estimate=None,
+        nest_visible=True, nest_disturbed="false",
+        species_detected=["female northern cardinal"],
+        threat_species_detected=[],  # no threat
+        near_nest_activity=False, direct_nest_interaction=False,
+        confidence=0.9, summary="Female cardinal on nest.",
+    )
+    sonnet_decision = _decision(Severity.CRITICAL, "direct_attack")
+    pre_state = NestState()
+    fake_store = MagicMock()
+
+    async def _run():
+        with patch.object(verifier_mod, "analyzer_mod") as mock_analyzer:
+            mock_analyzer.analyze = AsyncMock(return_value=opus_obs)
+            final, _opus = await verifier_mod.verify_alert(
+                jpeg=b"x", sonnet_obs=sonnet_obs,
+                sonnet_decision=sonnet_decision,
+                pre_state=pre_state, store=fake_store, ts=1234.0,
+                verification_model="claude-opus-4-7",
+            )
+            return final
+
+    final = asyncio.run(_run())
+    assert final is None, (
+        "Override must also suppress CRITICAL when Opus says cardinal+no threat."
+    )
