@@ -384,6 +384,15 @@ class NestState(BaseModel):
     # without confirmation, this resets (stale sighting — possibly a misread).
     first_chick_sighting_ts: float | None = None
 
+    # Ambiguous-occupied-cup pending candidate (2026-04-17). Set on the first
+    # frame where a bird is visibly at the nest but the analyzer cannot
+    # confirm species (cardinal_on_nest="uncertain", no named threat species).
+    # A second consecutive matching frame within the pending window
+    # (_AMBIGUOUS_CONFIRM_WINDOW_S, default 10 min) promotes to soft presence
+    # and clears. If no second frame arrives within the window, the candidate
+    # is stale and the next matching frame restarts as a fresh 1st.
+    pending_ambiguous_frame_ts: float | None = None
+
     def absence_seconds(self, now_ts: float) -> int | None:
         if self.last_mother_seen_ts is None:
             return None

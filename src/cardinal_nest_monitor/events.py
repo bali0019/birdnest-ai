@@ -114,6 +114,58 @@ def observation_indicates_ir_mode(obs: NestObservation) -> bool:
     return summary_indicates_ir_mode(obs.summary)
 
 
+# Named threat species (as opposed to "unknown"). These bypass the
+# ambiguous-occupied-cup path and fire threat alerts on a single frame.
+_NAMED_THREATS = frozenset({
+    "brown_thrasher",
+    "blue_jay",
+    "squirrel",
+    "chipmunk",
+})
+
+
+def is_ambiguous_occupied_cup(obs: NestObservation) -> bool:
+    """True when a bird is visibly at the nest cup but the analyzer cannot
+    confirm species (no thrasher field marks visible + cardinal crest not
+    visible either). This is the dominant false-alarm pattern from
+    2026-04-17: the camera's below/behind angle hides the cardinal's crest
+    when she's sitting low, and Sonnet correctly returns
+    cardinal_on_nest="uncertain" + threat_species=["unknown"]. Without the
+    ambiguous-cup path, a single such frame fires BOTH a MEDIUM (not
+    "true") AND a HIGH predator_near_nest (unknown + near_nest).
+
+    Criteria:
+      - nest_visible=true (frame actually shows the nest)
+      - near_nest_activity=true (bird body is at/near the cup)
+      - cardinal_on_nest="uncertain" (not a confirmed presence or absence)
+      - direct_nest_interaction=false (an explicit direct attack is NEVER
+        ambiguous — a beak-in-cup reading must fire CRITICAL even if the
+        species is reported as "unknown". Codex P1 guardrail 2026-04-17.)
+      - threat_species_detected has no NAMED threat (it may contain
+        "unknown" or be empty, but a named thrasher/jay/squirrel/chipmunk
+        bypasses this path and fires threat rules directly)
+
+    Direct-nest-interaction AND named threats still fire on a single frame.
+    """
+    if not obs.nest_visible:
+        return False
+    if not obs.near_nest_activity:
+        return False
+    if obs.cardinal_on_nest != "uncertain":
+        return False
+    # Explicit direct attacks are never "ambiguous" — even if species is
+    # reported as "unknown", a beak-in-cup reading is a life-critical
+    # signal that must reach the CRITICAL direct_attack rule (rule 1).
+    if obs.direct_nest_interaction:
+        return False
+    # Any NAMED threat species bypasses the ambig path.
+    for t in obs.threat_species_detected:
+        species_str = t.value if hasattr(t, "value") else str(t)
+        if species_str in _NAMED_THREATS:
+            return False
+    return True
+
+
 def _cooldown_blocks(
     store: StateStore,
     severity: Severity,
@@ -246,9 +298,19 @@ def _lifecycle_event(
     #   - 1st sighting sets first_chick_sighting_ts in state but fires
     #     nothing — we stay quiet until confirmation arrives.
     _CONFIRM_WINDOW_S = 4 * 3600
+    # Tightened 2026-04-17 (Codex): only explicit chicks_visible="true" at
+    # ≥0.75 confidence counts as a chick signal for hatch prediction.
+    # mother_feeding_chicks=true alone no longer fires the hatch alert
+    # (the feeding-event suppression for MEDIUM long_absence still uses
+    # it separately in _feeding_suppresses_medium). Prevents the
+    # reddish-blob false-positive from day 3-4 of incubation that caused
+    # today's stale first_chick_sighting_ts. Must stay in sync with the
+    # matching logic in state.py::record().
+    from cardinal_nest_monitor.state import _CHICK_SIGHTING_CONFIDENCE_FLOOR
+
     if state.lifecycle_stage == "incubation" and (
         observation.chicks_visible == "true"
-        or observation.mother_feeding_chicks
+        and observation.confidence >= _CHICK_SIGHTING_CONFIDENCE_FLOOR
     ):
         is_confirmation = (
             state.first_chick_sighting_ts is not None
@@ -332,12 +394,6 @@ def evaluate(
     is something the user wants to know, and the [BACKFILL +Nm] channel
     routing makes it visible without polluting the live alert channel.
     """
-    # ── Lifecycle event (skip on backfill — state-relative) ────────────
-    if not is_backfill:
-        lifecycle_alert = _lifecycle_event(observation, state, store, ts)
-        if lifecycle_alert is not None:
-            return lifecycle_alert
-
     # ── Universal gates ────────────────────────────────────────────────
     if observation.confidence < _MIN_CONFIDENCE:
         log.debug("low confidence %.2f → no alert", observation.confidence)
@@ -347,11 +403,47 @@ def evaluate(
         log.debug("smart filter dropped yard motion")
         return None
 
+    # ── Ambiguous-occupied-cup path (2026-04-17) ──────────────────────
+    # Must run BEFORE lifecycle_event (Codex P2): an ambiguous frame has
+    # cardinal_on_nest="uncertain" which lifecycle treats as "not true"
+    # and could leak into fledge-detection or chick-signal paths. Placing
+    # the skip here prevents those false transitions. state.py::record
+    # handles the 2-consecutive-frame soft-presence promotion; here we
+    # just short-circuit to None for the ambig frame itself.
+    #
+    # is_ambiguous_occupied_cup() excludes direct_nest_interaction=true
+    # and named threats, so real single-frame attacks still reach rule 1
+    # / rule 3 below.
+    if is_ambiguous_occupied_cup(observation):
+        log.info(
+            "ambig-cup: frame matches ambiguous-occupied-cup criteria "
+            "(nest_visible, near_nest, cardinal_on_nest=uncertain, no "
+            "direct interaction, no named threat). Skipping MEDIUM/HIGH/"
+            "lifecycle rules; state.py handles pending/soft-presence."
+        )
+        return None
+
+    # ── Lifecycle event (skip on backfill — state-relative) ────────────
+    if not is_backfill:
+        lifecycle_alert = _lifecycle_event(observation, state, store, ts)
+        if lifecycle_alert is not None:
+            return lifecycle_alert
+
     threats = _species_list(observation)
     primary_species = threats[0] if threats else None
 
     # ── Rule 1: Direct attack (CRITICAL, 60s per species) ─────────────
-    if observation.direct_nest_interaction:
+    # Invariant (added 2026-04-17): direct_nest_interaction=true can ONLY
+    # produce a threat alert when there is also a non-empty threat_species
+    # list. The analyzer's schema defines direct_nest_interaction as
+    # applying to NON-CARDINAL animals, but models occasionally violate
+    # that (e.g. Opus set direct_nest_interaction=true on an observation
+    # that explicitly identified the female cardinal tending eggs on
+    # 2026-04-17 14:56). Without this gate, such a schema-violating
+    # observation would fire a CRITICAL alert on the cardinal's own
+    # normal behavior. A cardinal-positive / threat-empty observation
+    # can never produce a CRITICAL here.
+    if observation.direct_nest_interaction and threats:
         sev = Severity.CRITICAL
         if not _cooldown_blocks(store, sev, primary_species, _CD_DIRECT_ATTACK, ts):
             return AlertDecision(
@@ -371,8 +463,17 @@ def evaluate(
     # state.last_known_egg_count (which may have been set AFTER this snap)
     # produces a meaningless comparison. The historical drop, if real, was
     # already detected when the live snap landed.
+    #
+    # Gate (2026-04-17): skip entirely unless enable_egg_count_alerts=true.
+    # This camera mounting cannot reliably see into the cup — eggs sit
+    # underneath the incubating mother and are occluded by the nest rim
+    # from this angle. The rule fired CRITICAL today (15:17:56) on a
+    # miscount (2→1 egg) caused by one egg being occluded, not predation.
+    # The rule stays in code for a hypothetical future top-down camera;
+    # flip ENABLE_EGG_COUNT_ALERTS=true in .env to re-enable.
     if (
-        not is_backfill
+        get_settings().enable_egg_count_alerts
+        and not is_backfill
         and observation.eggs_visible == "true"
         and observation.egg_count_estimate is not None
         and state.last_known_egg_count is not None

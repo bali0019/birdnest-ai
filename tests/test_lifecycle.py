@@ -172,23 +172,77 @@ def test_second_sighting_outside_window_resets(store, lifecycle_on):
     assert state.hatch_detected_ts is None
 
 
-def test_mother_feeding_chicks_also_confirms(store, lifecycle_on):
-    """The confirmation signal can be chicks_visible OR mother_feeding_chicks.
-    Mixing the two within the window still confirms."""
+def test_mother_feeding_chicks_alone_no_longer_advances_lifecycle(store, lifecycle_on):
+    """Tightened 2026-04-17: mother_feeding_chicks=true alone is NO LONGER
+    a chick signal for lifecycle advancement. Only explicit chicks_visible=
+    "true" at ≥0.75 confidence counts. This prevents "food-in-beak"
+    misreads from advancing state without visible chick anatomy.
+
+    Scenario: mother_feeding_chicks=true on two separate frames within
+    the 4h window. Pre-fix behavior would have confirmed hatch. Post-fix,
+    stage must stay in incubation.
+    """
     t0 = time.time()
     store.record(t0, False, None, _obs(), None)
 
-    # 1st: chicks_visible=true
+    # 1st: mother_feeding_chicks=true (no chicks_visible="true")
+    t1 = t0 + 3600
+    store.record(t1, False, None, _obs(
+        cardinal_on_nest="false",
+        mother_feeding_chicks=True,
+    ), None)
+
+    # 2nd: mother_feeding_chicks=true again
+    t2 = t1 + 1800
+    state = store.record(t2, False, None, _obs(
+        mother_feeding_chicks=True,
+    ), None)
+    assert state.lifecycle_stage == "incubation", (
+        "mother_feeding_chicks alone must not advance lifecycle"
+    )
+    assert state.hatch_detected_ts is None
+
+
+def test_chicks_visible_below_confidence_floor_does_not_advance(store, lifecycle_on):
+    """Even chicks_visible="true" below the 0.75 confidence floor does not
+    count as a chick signal. Prevents low-confidence reddish-blob reads
+    from advancing lifecycle (replays today's 15:23 false sighting at 0.82
+    — but at any confidence below 0.75).
+    """
+    t0 = time.time()
+    store.record(t0, False, None, _obs(), None)
+
+    t1 = t0 + 3600
+    state = store.record(t1, False, None, _obs(
+        cardinal_on_nest="false",
+        chicks_visible="true",
+        confidence=0.65,  # below 0.75 floor
+    ), None)
+    assert state.first_chick_sighting_ts is None, (
+        "Below-floor confidence must not record as 1st chick sighting"
+    )
+    assert state.lifecycle_stage == "incubation"
+
+
+def test_chicks_visible_at_or_above_floor_does_advance(store, lifecycle_on):
+    """Negative control: two chicks_visible=true observations at ≥0.75
+    confidence still properly advance to feeding.
+    """
+    t0 = time.time()
+    store.record(t0, False, None, _obs(), None)
+
     t1 = t0 + 3600
     store.record(t1, False, None, _obs(
         cardinal_on_nest="false",
         chicks_visible="true",
+        confidence=0.80,
     ), None)
 
-    # 2nd: mother_feeding_chicks=true (different signal, same window)
     t2 = t1 + 1800
     state = store.record(t2, False, None, _obs(
-        mother_feeding_chicks=True,
+        cardinal_on_nest="false",
+        chicks_visible="true",
+        confidence=0.85,
     ), None)
     assert state.lifecycle_stage == "feeding"
     assert state.hatch_detected_ts == pytest.approx(t2, abs=1.0)
@@ -366,17 +420,25 @@ def test_fledge_alert_fires_on_transition(store, lifecycle_on):
 def test_feeding_event_suppresses_medium_for_30min(store, lifecycle_on):
     """During feeding stage, a recent feeding event suppresses MEDIUM
     long_absence alerts for 30 minutes."""
-    # Seed feeding stage with 2 confirming sightings
+    # Seed feeding stage with 2 confirming chicks_visible=true sightings
+    # at ≥0.75 confidence (tightened 2026-04-17). mother_feeding_chicks
+    # alone no longer advances lifecycle, but still records feeding events
+    # for the 30-min suppression path — so we set both flags to exercise
+    # both behaviors.
     t0 = time.time() - 3600
     store.record(t0 - 300, False, None, _obs(
         cardinal_on_nest="true",
         mother_feeding_chicks=True,
+        chicks_visible="true",
+        chick_count_estimate=2,
+        confidence=0.85,
     ), None)
     store.record(t0, False, None, _obs(
         cardinal_on_nest="true",
         mother_feeding_chicks=True,
         chicks_visible="true",
         chick_count_estimate=2,
+        confidence=0.85,
     ), None)
 
     # 10 min later: mom has been absent, normally would trigger MEDIUM.
@@ -395,17 +457,22 @@ def test_feeding_event_suppresses_medium_for_30min(store, lifecycle_on):
 
 def test_feeding_suppression_expires_after_30min(store, lifecycle_on):
     """After 30 min with no feeding event, MEDIUM fires again."""
-    # Seed feeding with 2 confirming sightings. Both record feeding events.
+    # Seed feeding with 2 confirming chicks_visible=true sightings at
+    # ≥0.75 confidence (tightened 2026-04-17). Both record feeding events.
     t0 = time.time() - 7200
     store.record(t0 - 300, False, None, _obs(
         cardinal_on_nest="true",
         mother_feeding_chicks=True,
+        chicks_visible="true",
+        chick_count_estimate=2,
+        confidence=0.85,
     ), None)
     store.record(t0, False, None, _obs(
         cardinal_on_nest="true",
         mother_feeding_chicks=True,
         chicks_visible="true",
         chick_count_estimate=2,
+        confidence=0.85,
     ), None)
 
     # 45 minutes later: mom still away, suppression expired

@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS state (
   last_feeding_event_ts REAL,
   first_chick_sighting_ts REAL,
   egg_laying_started_ts REAL,
-  incubation_started_ts REAL
+  incubation_started_ts REAL,
+  pending_ambiguous_frame_ts REAL
 );
 INSERT OR IGNORE INTO state (id) VALUES (1);
 
@@ -80,6 +81,19 @@ CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(ts);
 
 _MIN_CONFIDENCE = 0.55
 _ABSENCE_ENTER_SECONDS = 120  # mother gone ≥ 2 min → considered absent
+
+# Window for confirming an ambiguous-occupied-cup frame. First matching
+# frame sets pending_ambiguous_frame_ts. Second matching frame within this
+# window promotes to soft presence (clear in_absence, update last_seen).
+# 10 min covers the 5-min default + 1-min absence cadence with slack.
+_AMBIGUOUS_CONFIRM_WINDOW_S = 10 * 60
+
+# Chick-sighting confidence floor (2026-04-17). Higher than _MIN_CONFIDENCE
+# because a false chick sighting at day 3-4 of incubation (a confident
+# 0.82 reddish-blob call) led to a stale first_chick_sighting_ts that
+# would have bypassed the 2-sighting guard on a real later hatch. A
+# higher floor makes the 2-sighting guard more meaningful.
+_CHICK_SIGHTING_CONFIDENCE_FLOOR = 0.75
 
 # Pydantic's compact model_dump_json() produces "confidence":0.62 with no
 # spaces. Use a regex to pull the numeric value out instead of json.loads()
@@ -163,6 +177,15 @@ class StateStore:
             # existing production DB from observation history.
             "ALTER TABLE state ADD COLUMN egg_laying_started_ts REAL",
             "ALTER TABLE state ADD COLUMN incubation_started_ts REAL",
+            # Ambiguous-occupied-cup pending candidate (2026-04-17). When
+            # cardinal_on_nest=uncertain + near_nest_activity=true + no named
+            # threat species, we treat the first frame as a "pending ambiguous"
+            # candidate (no alert). A second consecutive matching frame within
+            # the pending window = soft presence. See events.py
+            # is_ambiguous_occupied_cup() for the exact predicate. Stores the
+            # timestamp of the first frame so the confirmation window can be
+            # checked on the next snap.
+            "ALTER TABLE state ADD COLUMN pending_ambiguous_frame_ts REAL",
         ]
         for sql in _migrations:
             try:
@@ -197,6 +220,7 @@ class StateStore:
         first_chick_sighting_ts = _opt("first_chick_sighting_ts")
         egg_laying_started_ts = _opt("egg_laying_started_ts")
         incubation_started_ts = _opt("incubation_started_ts")
+        pending_ambiguous_frame_ts = _opt("pending_ambiguous_frame_ts")
         return NestState(
             last_mother_seen_ts=row["last_mother_seen_ts"],
             last_known_egg_count=row["last_known_egg_count"],
@@ -213,6 +237,7 @@ class StateStore:
             first_chick_sighting_ts=first_chick_sighting_ts,
             egg_laying_started_ts=egg_laying_started_ts,
             incubation_started_ts=incubation_started_ts,
+            pending_ambiguous_frame_ts=pending_ambiguous_frame_ts,
             absence_started_ts=absence_started_ts,
         )
 
@@ -267,6 +292,7 @@ class StateStore:
         first_chick_sighting_ts = _opt("first_chick_sighting_ts")
         egg_laying_started_ts = _opt("egg_laying_started_ts")
         incubation_started_ts = _opt("incubation_started_ts")
+        pending_ambiguous_frame_ts = _opt("pending_ambiguous_frame_ts")
 
         if observation is not None and observation.confidence >= _MIN_CONFIDENCE:
             # During quiet hours OR whenever the camera is in IR mode, require
@@ -311,6 +337,64 @@ class StateStore:
         elif prev_in_absence and not in_absence:
             absence_started_ts = None
         # else: no change, absence_started_ts stays whatever it was on load.
+
+        # ── Ambiguous-occupied-cup pending-candidate path (2026-04-17) ────
+        # When the analyzer sees a bird visibly at the nest cup but cannot
+        # confirm species (no thrasher field marks, no cardinal crest
+        # visible) it correctly returns cardinal_on_nest="uncertain" and
+        # often threat_species_detected=["unknown"]. Before this logic,
+        # that single frame would fire BOTH a MEDIUM (not-true) AND a HIGH
+        # predator_near_nest (unknown + near_nest_activity). Drove ~20 false
+        # alerts on 2026-04-17.
+        #
+        # Policy (Codex): first ambiguous occupied-cup frame = no alert,
+        # store as pending candidate. Second consecutive matching frame
+        # within AMBIGUOUS_CONFIRM_WINDOW_S = soft presence (update
+        # last_mother_seen_ts, clear in_absence, clear pending). Stale
+        # pending (no 2nd within window) is discarded on next frame.
+        # Explicit named threats (brown_thrasher, blue_jay, squirrel,
+        # chipmunk) bypass this path and fire normally.
+        if observation is not None:
+            from cardinal_nest_monitor.events import is_ambiguous_occupied_cup
+
+            _is_ambig = is_ambiguous_occupied_cup(observation)
+            if _is_ambig:
+                _window = _AMBIGUOUS_CONFIRM_WINDOW_S
+                if (
+                    pending_ambiguous_frame_ts is not None
+                    and (ts - pending_ambiguous_frame_ts) <= _window
+                ):
+                    # 2nd consecutive match within window → soft presence.
+                    last_mother_seen_ts = ts
+                    in_absence = False
+                    absence_started_ts = None
+                    pending_ambiguous_frame_ts = None
+                    log.info(
+                        "ambig-cup: 2nd consecutive frame within %ds → "
+                        "soft-presence (cleared in_absence, updated "
+                        "last_mother_seen_ts=%.0f)",
+                        _window, ts,
+                    )
+                else:
+                    # 1st ambig frame OR stale prior pending → new pending.
+                    if pending_ambiguous_frame_ts is not None:
+                        log.info(
+                            "ambig-cup: prior pending stale (%.0fs ago); "
+                            "restarting window",
+                            ts - pending_ambiguous_frame_ts,
+                        )
+                    pending_ambiguous_frame_ts = ts
+                    log.info(
+                        "ambig-cup: 1st ambiguous frame at ts=%.0f; no "
+                        "alert, pending confirmation within %ds",
+                        ts, _window,
+                    )
+            else:
+                # Not an ambiguous frame. If we had a pending candidate
+                # and this frame is unambiguous (clear cardinal or clear
+                # empty or real threat), clear the pending state.
+                if pending_ambiguous_frame_ts is not None:
+                    pending_ambiguous_frame_ts = None
 
         # ── Lifecycle stage transitions (flag-gated) ──────────────────────
         # When lifecycle_tracking_enabled is False (default), these
@@ -418,9 +502,17 @@ class StateStore:
             #     treat the next one as a new "1st sighting".
             _CONFIRM_WINDOW_S = 4 * 3600
             if lifecycle_stage == "incubation":
+                # Tightened 2026-04-17 (Codex): only an explicit
+                # chicks_visible="true" observation at sufficient confidence
+                # counts as a chick signal. mother_feeding_chicks=true alone
+                # no longer advances the lifecycle — it previously triggered
+                # on any "food-in-beak" read which can false-positive on
+                # low-res images. The 0.75 confidence floor filters out
+                # speculative reddish-blob reads at day 3-4 of incubation
+                # that caused today's stale first_chick_sighting_ts.
                 chick_signal = (
                     observation.chicks_visible == "true"
-                    or observation.mother_feeding_chicks
+                    and observation.confidence >= _CHICK_SIGHTING_CONFIDENCE_FLOOR
                 )
                 if chick_signal:
                     if first_chick_sighting_ts is None:
@@ -513,7 +605,8 @@ class StateStore:
             " last_feeding_event_ts = ?, "
             " first_chick_sighting_ts = ?, "
             " egg_laying_started_ts = ?, "
-            " incubation_started_ts = ? "
+            " incubation_started_ts = ?, "
+            " pending_ambiguous_frame_ts = ? "
             "WHERE id = 1",
             (
                 last_mother_seen_ts,
@@ -530,6 +623,7 @@ class StateStore:
                 first_chick_sighting_ts,
                 egg_laying_started_ts,
                 incubation_started_ts,
+                pending_ambiguous_frame_ts,
             ),
         )
         return self._row_to_state(self._load_row())

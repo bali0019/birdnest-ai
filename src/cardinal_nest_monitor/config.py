@@ -55,6 +55,16 @@ class Settings(BaseSettings):
     # must pass 13/13 before any analyzer prompt change.
     lifecycle_tracking_enabled: bool = Field(True)
 
+    # Egg-count alerting (CRITICAL egg_loss rule). This camera mounting
+    # CANNOT see the eggs reliably (they sit underneath the incubating
+    # mother), so egg-count observations are unreliable and must not drive
+    # alerts on this deployment. Default False. The rule code remains in
+    # events.py for a hypothetical future camera that can see the cup
+    # directly — set to True in .env to re-enable. Added 2026-04-17 after
+    # a false CRITICAL egg_loss fired on a miscount (egg count 2→1 due to
+    # one egg being occluded by the nest rim from this camera angle).
+    enable_egg_count_alerts: bool = Field(False)
+
     # ── Discord ─────────────────────────────────────────────────────────
     discord_webhook_url: str = Field("")
     # Optional second webhook for the per-snap feed channel. Empty = disabled.

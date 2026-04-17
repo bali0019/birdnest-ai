@@ -168,17 +168,24 @@ async def test_feeding_stage_suppresses_medium_absence_alerts(
 ):
     """Once in feeding stage, a recent feeding event should suppress
     MEDIUM long_absence alerts (she's expected to be away feeding)."""
-    # Seed feeding stage with 2 confirming feeding events (2-sighting guard)
+    # Seed feeding stage with 2 confirming chicks_visible=true sightings at
+    # ≥0.75 confidence (tightened 2026-04-17: mother_feeding_chicks alone
+    # no longer advances). mother_feeding_chicks=true still records the
+    # feeding event used by the 30-min suppression path.
     t0 = time.time() - 7200
     store.record(t0 - 300, False, None, _obs(
         cardinal_on_nest="true",
         mother_feeding_chicks=True,
+        chicks_visible="true",
+        chick_count_estimate=2,
+        confidence=0.85,
     ), None)
     store.record(t0, False, None, _obs(
         cardinal_on_nest="true",
         mother_feeding_chicks=True,
         chicks_visible="true",
         chick_count_estimate=2,
+        confidence=0.85,
     ), None)
 
     assert store.get_state().lifecycle_stage == "feeding"
