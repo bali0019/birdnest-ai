@@ -70,6 +70,8 @@ def _trip_detection(
     prior_state: str | None = None
 
     settings = get_settings()
+    from cardinal_nest_monitor.events import summary_indicates_ir_mode
+
     for row in observations:
         obs = _parse_obs(row)
         if obs is None:
@@ -79,11 +81,17 @@ def _trip_detection(
         state = obs.get("cardinal_on_nest")
         if state not in ("true", "false"):
             continue  # uncertain / unknown → don't disturb
-        # During quiet hours, IR can't reliably detect the cardinal —
-        # she sleeps on the nest overnight. Presume on-nest so trip
-        # detection doesn't create false "leave" transitions.
+        # During quiet hours OR whenever the analyzer reported an IR/night
+        # frame, IR can't reliably detect the cardinal — she sleeps on the
+        # nest overnight, and at dusk grayscale plumage blends with the
+        # cup material. Presume on-nest so trip detection doesn't invent
+        # phantom leave/return transitions on IR-driven false negatives.
+        # Mirrors events.py rule 4 + state.py confidence-floor logic so
+        # the analytics report and the live alert path can never disagree.
         obs_time = datetime.fromtimestamp(float(row["ts"])).time()
-        if settings.in_quiet_hours(obs_time) and state != "true":
+        is_quiet = settings.in_quiet_hours(obs_time)
+        is_ir = summary_indicates_ir_mode(obs.get("summary"))
+        if (is_quiet or is_ir) and state != "true":
             state = "true"
 
         if prior_state == "true" and state == "false":
@@ -136,6 +144,8 @@ def _presence_totals(
 
     # Build (ts, state) list filtered to confident observations
     settings = get_settings()
+    from cardinal_nest_monitor.events import summary_indicates_ir_mode
+
     points: list[tuple[float, str]] = []
     for row in observations:
         obs = _parse_obs(row)
@@ -146,11 +156,14 @@ def _presence_totals(
         state = obs.get("cardinal_on_nest")
         if state not in ("true", "false"):
             state = "unknown"
-        # During quiet hours, IR can't reliably detect the cardinal —
-        # she sleeps on the nest overnight. Presume on-nest so presence
-        # totals don't count overnight as "off nest."
+        # During quiet hours OR whenever the analyzer reported an IR/night
+        # frame, presume on-nest. Mirrors _trip_detection above + the live
+        # path's IR-mode suppression (events.py rule 4) so presence totals
+        # match what the alert path believes was happening.
         obs_time = datetime.fromtimestamp(float(row["ts"])).time()
-        if settings.in_quiet_hours(obs_time) and state != "true":
+        is_quiet = settings.in_quiet_hours(obs_time)
+        is_ir = summary_indicates_ir_mode(obs.get("summary"))
+        if (is_quiet or is_ir) and state != "true":
             state = "true"
         points.append((float(row["ts"]), state))
 

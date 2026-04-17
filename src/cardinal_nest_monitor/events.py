@@ -90,6 +90,20 @@ _IR_MODE_PHRASES = (
 )
 
 
+def summary_indicates_ir_mode(summary: str | None) -> bool:
+    """True when the analyzer's free-form summary indicates an IR/night frame.
+
+    Matches phrases from `_IR_MODE_PHRASES`. Exposed as a string-only
+    helper (rather than always wrapping in a NestObservation) so analytics.py
+    can call it on the raw `observation_json["summary"]` field without
+    re-parsing into a pydantic model. Both analytics and live evaluation
+    must use this same matcher so the report and the alerts can never
+    disagree about whether a given frame was IR.
+    """
+    text = (summary or "").lower()
+    return any(phrase in text for phrase in _IR_MODE_PHRASES)
+
+
 def observation_indicates_ir_mode(obs: NestObservation) -> bool:
     """True when the analyzer's own description indicates an IR/night image.
 
@@ -97,8 +111,7 @@ def observation_indicates_ir_mode(obs: NestObservation) -> bool:
     infrared / night vision when the Blink camera has switched to night mode.
     Cheaper and more reliable than re-decoding the JPEG to check grayscale-ness.
     """
-    text = (obs.summary or "").lower()
-    return any(phrase in text for phrase in _IR_MODE_PHRASES)
+    return summary_indicates_ir_mode(obs.summary)
 
 
 def _cooldown_blocks(

@@ -182,3 +182,108 @@ def test_system_metrics_snap_counts(store):
     assert report["system"]["analyzer_failures"] == 1
     # Cost is approximate — just verify it's non-zero
     assert report["system"]["cost_window_usd"] > 0
+
+
+# ── Codex round 3: analytics IR coercion (sunset → 23:00 gap) ────────
+
+def test_dusk_ir_false_off_does_not_invent_trip(store, monkeypatch):
+    """Regression: the live alert path suppresses MEDIUM long_absence on
+    IR-detected frames (events.py rule 4 + observation_indicates_ir_mode).
+    Analytics must do the same coercion in _trip_detection or it would
+    invent phantom foraging trips on IR false-negatives at dusk.
+
+    Reproduces by seeding a sequence: she's on the nest pre-dusk, then
+    several IR frames return cardinal_on_nest="false" with summaries that
+    mention IR mode, then she's back on the nest. Without the coercion,
+    this would register as a trip with the IR window's duration. With
+    the coercion, the IR frames are presumed on-nest and no trip fires.
+    """
+    from cardinal_nest_monitor.config import get_settings
+    settings = get_settings()
+    # Disable wall-clock quiet hours so ONLY the IR-text coercion can save us.
+    monkeypatch.setattr(settings, "quiet_hours", "")
+
+    t0 = time.time() - 3600
+    # Pre-dusk: she's on the nest.
+    store.record(t0, False, None, _make_obs("true"), None)
+    # IR period: 5 frames returning "false" with IR-mode summaries.
+    for i in range(5):
+        store.record(
+            t0 + 60 + i * 60, False, None,
+            _make_obs(
+                "false",
+                summary=(
+                    "Infrared night image — compact bird shape in cup is "
+                    "consistent with the female cardinal but species cannot "
+                    "be confirmed in grayscale IR."
+                ),
+                confidence=0.62,
+            ),
+            None,
+        )
+    # Dawn-equivalent: she's back, in daylight.
+    store.record(t0 + 600, False, None, _make_obs("true"), None)
+
+    report = compute_report(store, time.time(), window_hours=1)
+    assert report["trips"]["trip_count"] == 0, (
+        "Analytics must coerce IR-summary frames as on-nest, same as the "
+        "live alert path — otherwise it invents phantom dusk trips."
+    )
+
+
+def test_dusk_ir_does_not_inflate_off_nest_seconds(store, monkeypatch):
+    """Same scenario for _presence_totals: IR-detected frames must be
+    presumed on-nest so the report doesn't claim multi-minute off-nest
+    time during dusk windows that the live path now correctly suppresses.
+    """
+    from cardinal_nest_monitor.config import get_settings
+    settings = get_settings()
+    monkeypatch.setattr(settings, "quiet_hours", "")
+
+    t0 = time.time() - 3600
+    store.record(t0, False, None, _make_obs("true"), None)
+    for i in range(5):
+        store.record(
+            t0 + 60 + i * 60, False, None,
+            _make_obs(
+                "false",
+                summary="Grayscale IR view; bird in cup, identity uncertain.",
+                confidence=0.62,
+            ),
+            None,
+        )
+    store.record(t0 + 600, False, None, _make_obs("true"), None)
+
+    report = compute_report(store, time.time(), window_hours=1)
+    # IR frames should NOT contribute off-nest time.
+    assert report["presence"]["off_nest_s"] == 0, (
+        "IR-summary frames must NOT count as off-nest time."
+    )
+
+
+def test_dusk_non_ir_off_frame_still_counts_as_off(store, monkeypatch):
+    """Sanity check: a real off-nest snap (no IR phrasing in summary)
+    OUTSIDE quiet hours must still register. The IR coercion must not
+    silence legitimate daytime absences.
+    """
+    from cardinal_nest_monitor.config import get_settings
+    settings = get_settings()
+    monkeypatch.setattr(settings, "quiet_hours", "")
+
+    t0 = time.time() - 1800
+    store.record(t0, False, None, _make_obs("true"), None)
+    store.record(
+        t0 + 60, False, None,
+        _make_obs("false", summary="Daylight: nest empty, mom foraging."),
+        None,
+    )
+    store.record(
+        t0 + 360, False, None,
+        _make_obs("true", summary="Mom returned, on the nest."),
+        None,
+    )
+
+    report = compute_report(store, time.time(), window_hours=1)
+    assert report["trips"]["trip_count"] == 1, (
+        "Daylight off-nest must still register as a trip."
+    )

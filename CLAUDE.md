@@ -901,6 +901,13 @@ These remain operationally valuable through the existing `[BACKFILL +Nm]` channe
 - `test_backfill_snap_still_fires_predator_near_nest`
 - `test_negative_absence_guard_in_mother_returned_belt_and_suspenders`
 
+**Round-3 follow-up (analytics consistency, 2026-04-17):** `analytics.py::_trip_detection` and `_presence_totals` were still using only wall-clock `quiet_hours` to coerce ambiguous frames as on-nest. The live alert path's IR-mode suppression (§24) hadn't propagated. A dusk IR false-negative would NOT fire a MEDIUM alert (correct) but would still appear as a phantom foraging trip in the 8h analytics report (wrong). Fix: extracted a string-form `summary_indicates_ir_mode(summary)` helper from `events.py` and applied the same IR coercion in both analytics functions. Live alerts and analytics now agree on what IR frames mean. 3 new regression tests in `tests/test_analytics.py`:
+- `test_dusk_ir_false_off_does_not_invent_trip`
+- `test_dusk_ir_does_not_inflate_off_nest_seconds`
+- `test_dusk_non_ir_off_frame_still_counts_as_off` (negative control)
+
+If you ever extend the IR-phrase allowlist in `events.py::_IR_MODE_PHRASES`, you don't need to touch analytics — both live and analytics paths share `summary_indicates_ir_mode()`. **Don't fork these matchers.** Live and analytics disagreeing about IR detection would produce silent inconsistencies between Discord alerts and Discord reports.
+
 ---
 
 ### 27. Cost estimate now accounts for multi-image + verifier (2026-04-17)
@@ -965,7 +972,7 @@ Knobs in order of smallest impact first:
 
 ## Verifying before claiming "it works"
 
-1. `TEST_MODE=true python -m pytest tests/ -v` → all 145 tests pass (114 unit + 31 integration). Includes the lifecycle 6-stage tests, IR-mode suppression tests, the codex round-1 regression guards (stale-snap, nest_visible, confidence filter, downloader cadence), and the codex round-2 backfill-eval guards (mother_returned negative-absence, long_absence on stale, threat alerts still fire on stale).
+1. `TEST_MODE=true python -m pytest tests/ -v` → all 148 tests pass (117 unit + 31 integration). Includes the lifecycle 6-stage tests, IR-mode suppression tests, the codex round-1 regression guards (stale-snap, nest_visible, confidence filter, downloader cadence), the codex round-2 backfill-eval guards (mother_returned negative-absence, long_absence on stale, threat alerts still fire on stale), and the codex round-3 analytics IR-coercion guards (no phantom dusk trips, no inflated off-nest seconds).
 2. `launchctl list | grep cardinalnest` → both `com.cardinalnest.downloader` and `com.cardinalnest.analyzer` show PIDs + exit code 0.
 3. `tail ~/Library/Logs/cardinal-nest-monitor/downloader.out.log` → `Blink connected; N cameras`, `downloader watchdog started`.
 4. `tail ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log` → `spool consumer started`, `feed_worker started`, `analytics_scheduler started`, `watchdog started`.
