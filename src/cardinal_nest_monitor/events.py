@@ -145,6 +145,13 @@ def _lifecycle_event(
         return None
     if observation.confidence < _MIN_CONFIDENCE:
         return None
+    # Hard guardrail: only evaluate lifecycle transitions on frames where the
+    # analyzer can actually see the nest. Yard-motion or heavily-obscured
+    # frames (nest_visible=False) must not trigger fledge, hatch, or stage
+    # transitions — they don't carry enough signal to advance state.
+    # (Codex P2: lifecycle path can fire on non-nest frames.)
+    if not observation.nest_visible:
+        return None
 
     # Egg-laying begins: predict building_nest → egg_laying transition.
     # Fires once when the female is first observed sitting on the nest.
@@ -173,6 +180,8 @@ def _lifecycle_event(
         and state.egg_laying_started_ts is not None
         and (ts - state.egg_laying_started_ts) >= 24 * 3600
     ):
+        from cardinal_nest_monitor.state import _row_passes_confidence
+
         cur = store._conn.execute(
             "SELECT observation_json FROM observations "
             "WHERE ts >= ? AND ts <= ? AND observation_json IS NOT NULL",
@@ -182,7 +191,8 @@ def _lifecycle_event(
         confident_on_nest = 0
         for r in cur.fetchall():
             oj = r["observation_json"]
-            if not oj or '"confidence":' not in oj:
+            # Proper confidence filter — see state.py _row_passes_confidence.
+            if not _row_passes_confidence(oj):
                 continue
             if '"cardinal_on_nest":"true"' in oj:
                 confident_on_nest += 1

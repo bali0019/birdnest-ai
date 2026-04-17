@@ -226,10 +226,12 @@ async def run_downloader_service() -> int:
         """Write one snap to the spool. Called by blink_client.snap_loop.
 
         Signature matches snap_loop's existing
-        ``on_image(jpeg, meta, state_updated)`` contract verbatim — the
-        downloader simply ignores the analyzer-oriented state_updated event
-        (there's no analyzer-side state to wait for in this process). The
-        snap_loop's 10s wait on state_updated will expire harmlessly.
+        ``on_image(jpeg, meta, state_updated)`` contract verbatim. The
+        downloader has nothing to wait for (no analyzer-side state update in
+        this process) so we immediately SET the event. Without this, the
+        snap_loop's 10s wait would expire on EVERY cycle, adding a 10s
+        penalty per snap — which quietly slows the real burst/absence
+        cadence below the configured values. (Codex P2.)
 
         Contract: on any OSError, log and drop the snap rather than raise.
         The next scheduled snap will take its place; the spool is
@@ -244,6 +246,11 @@ async def run_downloader_service() -> int:
             # Anything else (ValueError for missing ts, etc.) is a bug in
             # the caller — still don't kill the loop over it.
             log.exception("spool write raised unexpectedly; snap dropped")
+        finally:
+            # Always fire, even on error: we're not going to produce a state
+            # update either way, so there's nothing meaningful to wait for.
+            if state_updated is not None:
+                state_updated.set()
 
     async def _on_clip(cam, clip: dict[str, Any]) -> None:
         """No-op for motion-triggered clips in downloader mode.

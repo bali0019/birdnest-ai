@@ -84,11 +84,16 @@ def _count_confident(
         "WHERE ts >= ? AND ts <= ? AND observation_json IS NOT NULL",
         (start_ts, end_ts),
     )
+    from cardinal_nest_monitor.state import _row_passes_confidence
+
     on_nest = 0
     total = 0
     for row in cur.fetchall():
         oj = row[0]
-        if not oj or '"confidence":' not in oj:
+        # Proper numeric confidence parse — must stay in sync with
+        # state.py::record and events.py::_lifecycle_event so the tool,
+        # live transitions, and predictive alerts all agree on "confident".
+        if not _row_passes_confidence(oj):
             continue
         if '"cardinal_on_nest":"true"' in oj:
             on_nest += 1

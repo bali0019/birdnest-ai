@@ -766,3 +766,141 @@ def test_egg_laying_started_ts_persists_across_record_calls(store, lifecycle_on)
         )
         assert state.lifecycle_stage == "egg_laying"
         assert state.egg_laying_started_ts == original_ts
+
+
+# ── Codex P2: nest_visible guard on lifecycle transitions ─────────────
+
+def test_lifecycle_event_skips_frames_without_nest_visible(store, lifecycle_on):
+    """_lifecycle_event() must return None when nest_visible=False.
+
+    Yard-motion frames or obscured-scene frames don't carry enough signal
+    to advance lifecycle state. Without this guard, a high-confidence
+    'no nest in frame' observation in the feeding stage with a stale
+    last_mother_seen_ts could emit a false fledge alert.
+    """
+    _seed_stage(
+        store,
+        "feeding",
+        hatch_detected_ts=time.time() - 48 * 3600,
+        last_mother_seen_ts=time.time() - 13 * 3600,
+    )
+    t0 = time.time()
+    # No nest in this frame at all — e.g. camera pointed elsewhere briefly.
+    obs = _obs(
+        nest_visible=False,
+        cardinal_on_nest="uncertain",
+        species_detected=[],
+        summary="Frame shows rose bush foliage only; no nest visible.",
+    )
+    pre_state = store.get_state()
+    assert evaluate(obs, pre_state, store, t0) is None
+
+
+def test_lifecycle_transition_skipped_when_nest_not_visible(store, lifecycle_on):
+    """state.py::record() must NOT advance lifecycle_stage on a frame
+    where nest_visible=False, regardless of cardinal_on_nest reading."""
+    _seed_stage(store, "building_nest")
+    t0 = time.time()
+    obs = _obs(
+        nest_visible=False,
+        cardinal_on_nest="true",  # even a positive read doesn't count
+        summary="Cardinal visible in frame but nest cup is out of view.",
+    )
+    state = store.record(t0, False, None, obs, None)
+    assert state.lifecycle_stage == "building_nest"
+    assert state.egg_laying_started_ts is None
+
+
+# ── Codex P2: proper confidence filter in 24h ratio scan ──────────────
+
+def test_low_confidence_rows_excluded_from_sitting_ratio(store, lifecycle_on):
+    """Sitting-ratio scan must filter rows at confidence ≥ 0.55. If it
+    counted low-confidence IR misreads, the egg_laying → incubation
+    transition would fire prematurely in the sunset-to-23:00 IR window.
+    """
+    t0 = time.time()
+    _seed_stage(
+        store,
+        "egg_laying",
+        egg_laying_started_ts=t0 - 24 * 3600 - 10,
+    )
+    # 30 observations — 25 are LOW-confidence on-nest (should be ignored),
+    # 5 are HIGH-confidence off-nest. If the ratio scan counted the
+    # low-confidence rows, it would see 25/30 = 83% sitting and transition.
+    # With the proper filter, only 5 confident off-nest rows count, and 0
+    # confident on-nest rows — ratio should NOT cross 70%.
+    _seed_observations(store, t0, n=25, on_nest_ratio=1.0, confidence=0.4)
+    _seed_observations(store, t0, n=5, on_nest_ratio=0.0, confidence=0.9)
+
+    # Trigger a record() — but not from the scan rows (that's dangerous
+    # because state.py re-runs the scan including this live snap too).
+    current = _obs(cardinal_on_nest="true", confidence=0.9)
+    state = store.record(t0, False, None, current, None)
+    # Should STILL be egg_laying because the confident evidence
+    # is actually off-nest-heavy, not on-nest-heavy.
+    assert state.lifecycle_stage == "egg_laying"
+
+
+# ── Codex P1: stale-snap guard ────────────────────────────────────────
+
+def test_stale_snap_inserted_but_does_not_touch_derived_state(store, lifecycle_on):
+    """An out-of-order (older than latest) observation must INSERT into the
+    observations table for history BUT SKIP the derived-state UPDATE.
+
+    Protects against the spool's newest-first claim ordering rolling back
+    in_absence / absence_started_ts / lifecycle_stage during analyzer
+    recovery after downtime.
+    """
+    t0 = time.time()
+
+    # First: a live snap at t0 flipping in_absence=True.
+    store.record(t0 - 200, False, None, _obs(cardinal_on_nest="true"), None)
+    out = _obs(
+        cardinal_on_nest="false", mother_cardinal_present="false",
+        species_detected=[], summary="Nest empty.",
+    )
+    live_state = store.record(t0, False, None, out, None)
+    assert live_state.in_absence is True
+    assert live_state.absence_started_ts == pytest.approx(t0, abs=1.0)
+
+    # Now simulate backfill: a STALE snap from 5 min before t0, showing
+    # mom on the nest. Under the old code, this would roll in_absence
+    # back to False. Under the stale-snap guard, it must be inserted for
+    # history but leave derived state untouched.
+    stale_ts = t0 - 300
+    on_nest = _obs(cardinal_on_nest="true", summary="Old snap, she was on nest.")
+    post_state = store.record(stale_ts, False, None, on_nest, None)
+
+    assert post_state.in_absence is True, (
+        "Stale on-nest snap must NOT clear in_absence"
+    )
+    assert post_state.absence_started_ts == live_state.absence_started_ts, (
+        "Stale snap must NOT regress absence_started_ts"
+    )
+
+    # Observation STILL got inserted (for analytics history).
+    cur = store._conn.execute(
+        "SELECT COUNT(*) FROM observations WHERE ts = ?", (stale_ts,),
+    )
+    assert cur.fetchone()[0] == 1
+
+
+def test_stale_snap_does_not_regress_lifecycle_stage(store, lifecycle_on):
+    """A stale snap from earlier in the laying stage must not roll a
+    state already in `feeding` back to `incubation` or `egg_laying`."""
+    t0 = time.time()
+    _seed_stage(
+        store,
+        "feeding",
+        hatch_detected_ts=t0 - 2 * 24 * 3600,
+        last_mother_seen_ts=t0 - 600,
+    )
+    # Seed a non-stale observation so latest_ts is known.
+    store.record(t0, False, None, _obs(cardinal_on_nest="true"), None)
+    stage_before = store.get_state().lifecycle_stage
+    assert stage_before == "feeding"
+
+    # A stale "cardinal sitting" snap from a day ago.
+    stale_ts = t0 - 24 * 3600
+    state = store.record(stale_ts, False, None, _obs(cardinal_on_nest="true"), None)
+    assert state.lifecycle_stage == "feeding"

@@ -14,6 +14,7 @@ implements the rule best-effort using the alerts table as backstop.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -79,6 +80,33 @@ CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(ts);
 
 _MIN_CONFIDENCE = 0.55
 _ABSENCE_ENTER_SECONDS = 120  # mother gone ≥ 2 min → considered absent
+
+# Pydantic's compact model_dump_json() produces "confidence":0.62 with no
+# spaces. Use a regex to pull the numeric value out instead of json.loads()
+# on every row — the 24h sitting-ratio scan touches hundreds of rows and
+# we only need one field. Anchored on the quote to avoid matching
+# "chick_count_estimate":0.62 or similar.
+_CONF_RE = re.compile(r'"confidence":([0-9]*\.?[0-9]+)')
+
+
+def _row_passes_confidence(observation_json: str | None, floor: float = _MIN_CONFIDENCE) -> bool:
+    """True when the serialized NestObservation has confidence >= `floor`.
+
+    Used by the 24h sitting-ratio scan to exclude low-confidence IR misreads
+    from the egg_laying → incubation transition. Previous substring match
+    ("`confidence`:" in row) silently accepted every row regardless of
+    value, which biased the inferred incubation_started_ts earlier than
+    reality (Codex P2).
+    """
+    if not observation_json:
+        return False
+    m = _CONF_RE.search(observation_json)
+    if m is None:
+        return False
+    try:
+        return float(m.group(1)) >= floor
+    except ValueError:
+        return False
 
 
 def _threat_to_str(x) -> str:
@@ -200,6 +228,21 @@ class StateStore:
         observation: NestObservation | None,
         evidence_dir: str | None,
     ) -> NestState:
+        # Stale-snap guard (Codex P1): the spool claims newest-first, so
+        # during analyzer recovery after downtime, older snaps can be
+        # processed AFTER newer ones. Without this guard, an old backfilled
+        # snap would overwrite the single-row derived state with stale
+        # truth — rolling back in_absence / absence_started_ts / lifecycle
+        # stage until the next live snap lands. Fix: if ts is older than
+        # the most recent observation we've already recorded, INSERT the
+        # observation for history + analytics but SKIP the derived-state
+        # UPDATE. Events.py still runs and can fire backfill alerts off
+        # pre-state, so no alert is lost.
+        cur = self._conn.execute("SELECT MAX(ts) AS latest FROM observations")
+        latest_row = cur.fetchone()
+        latest_ts = latest_row["latest"] if latest_row is not None else None
+        is_stale = latest_ts is not None and ts < latest_ts
+
         row = self._load_row()
         last_mother_seen_ts = row["last_mother_seen_ts"]
         last_known_egg_count = row["last_known_egg_count"]
@@ -278,6 +321,10 @@ class StateStore:
             get_settings().lifecycle_tracking_enabled
             and observation is not None
             and observation.confidence >= _MIN_CONFIDENCE
+            # Match the events.py guardrail: never advance lifecycle state
+            # based on a frame where the nest isn't visible. Yard-motion or
+            # heavily-obscured frames must not regress/advance stage.
+            and observation.nest_visible
         ):
             # Update chick count when chicks are confidently visible.
             if observation.chicks_visible == "true" and observation.chick_count_estimate is not None:
@@ -331,15 +378,12 @@ class StateStore:
                 confident_on_nest = 0
                 for r in cur.fetchall():
                     oj = r["observation_json"]
-                    if not oj:
+                    # Parse the confidence numerically and filter at 0.55+.
+                    # Low-confidence IR misreads must not contribute to the
+                    # sitting ratio or they bias the transition earlier
+                    # than the real egg_laying → incubation boundary.
+                    if not _row_passes_confidence(oj):
                         continue
-                    # Cheap string match — avoids json.loads on every snap.
-                    if '"confidence":' not in oj:
-                        continue
-                    # Only count observations that were confident enough to
-                    # trust ("confidence": 0.55+). Approximated by checking
-                    # the string for any confidence >= 0.55 — we match the
-                    # threshold used elsewhere in this file.
                     if '"cardinal_on_nest":"true"' in oj:
                         confident_on_nest += 1
                         confident_total += 1
@@ -447,6 +491,13 @@ class StateStore:
                 evidence_dir,
             ),
         )
+        if is_stale:
+            # Observation inserted for history; derived state untouched.
+            log.info(
+                "record: stale snap ts=%.0f (latest=%.0f); skipped derived-state "
+                "update", ts, latest_ts,
+            )
+            return self._row_to_state(self._load_row())
         self._conn.execute(
             "UPDATE state SET "
             " last_mother_seen_ts = ?, "
