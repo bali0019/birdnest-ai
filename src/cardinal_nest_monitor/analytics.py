@@ -30,10 +30,14 @@ log = logging.getLogger(__name__)
 _MIN_CONFIDENCE = 0.55
 
 # Approximate cost per analyzer call, used for window-cost estimation.
-# Sonnet 4.6 ~$0.01 per snap (2k input + 300 output). This is intentionally
-# simple — prompt caching and message size variance will make actual cost
-# a bit lower but the ballpark is fine for a status number.
-_ANALYZER_COST_USD_PER_CALL = 0.010
+# Sonnet 4.6 with multi-image (full + center-crop + overview, default-on
+# 2026-04-16) is ~$0.02/snap. Was $0.010 historically when MULTI_IMAGE_ANALYSIS
+# was off — bumped 2026-04-17 after Codex flagged the analytics report
+# materially understated real spend. Verifier calls (~$0.05/CRITICAL or HIGH
+# alert) are estimated separately from the alerts table when computing the
+# window cost.
+_ANALYZER_COST_USD_PER_CALL = 0.020
+_VERIFIER_COST_USD_PER_CALL = 0.050
 
 
 def _parse_obs(row: Any) -> dict[str, Any] | None:
@@ -237,19 +241,34 @@ def _alert_summary(alerts: list[Any]) -> dict[str, Any]:
 
 def _system_health(
     observations: list[Any],
+    alerts: list[Any],
     analyzer_model: str,
 ) -> dict[str, Any]:
-    """System-health metrics: snap counts, failures, estimated cost."""
+    """System-health metrics: snap counts, failures, estimated cost.
+
+    Cost includes both analyzer calls (per snap) AND verifier calls
+    (per CRITICAL/HIGH alert that ran the blind Opus second-opinion
+    pass). Verifier calls are estimated from the alerts table by counting
+    rows at severity CRITICAL or HIGH within the window. This slightly
+    over-counts when verify_alerts_with_opus=False but matches reality
+    when the default-on path is in use.
+    """
     snaps = len(observations)
     failures = sum(
         1 for row in observations if not (row["observation_json"] or "").strip()
     )
-    # Cost estimate: successful analyzer calls × per-call price
     successful = snaps - failures
-    cost_usd = successful * _ANALYZER_COST_USD_PER_CALL
+    verifier_calls = sum(
+        1 for row in alerts if row["severity"] in ("CRITICAL", "HIGH")
+    )
+    cost_usd = (
+        successful * _ANALYZER_COST_USD_PER_CALL
+        + verifier_calls * _VERIFIER_COST_USD_PER_CALL
+    )
     return {
         "snaps_taken": snaps,
         "analyzer_failures": failures,
+        "verifier_calls": verifier_calls,
         "cost_window_usd": round(cost_usd, 2),
         "analyzer_model": analyzer_model,
     }
@@ -276,7 +295,7 @@ def compute_report(
     trips = _trip_detection(observations, window_end_ts)
     threats = _threat_summary(observations)
     alert_stats = _alert_summary(alerts)
-    system = _system_health(observations, analyzer_model)
+    system = _system_health(observations, alerts, analyzer_model)
 
     report: dict[str, Any] = {
         "window_start_ts": window_start_ts,

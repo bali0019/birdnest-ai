@@ -40,8 +40,13 @@ log = logging.getLogger(__name__)
 
 
 # ── Cost model (rough, per-call) ────────────────────────────────────────
-# Single-tier Sonnet: ~$0.01 per snap. Used only for heartbeat estimate.
-_ANALYZER_COST_PER_CALL = 0.01
+# Single-tier Sonnet with multi-image (full + center-crop + overview): ~$0.02
+# per snap. Was $0.01 historically when MULTI_IMAGE_ANALYSIS was off — bumped
+# 2026-04-17 after Codex flagged the heartbeat estimate materially undercounts
+# real spend now that multi-image is default-on. Verifier cost is tracked
+# separately because it only runs on CRITICAL/HIGH (~$0.05/call).
+_ANALYZER_COST_PER_CALL = 0.02
+_VERIFIER_COST_PER_CALL = 0.05
 
 
 class DailyCounters:
@@ -51,6 +56,7 @@ class DailyCounters:
         self._day = datetime.now().date()
         self.events = 0
         self.analyzer_successes = 0
+        self.verifier_calls = 0
         self.alerts = 0
 
     def _maybe_roll(self) -> None:
@@ -60,6 +66,7 @@ class DailyCounters:
             self._day = today
             self.events = 0
             self.analyzer_successes = 0
+            self.verifier_calls = 0
             self.alerts = 0
 
     def record_snap(self, analyzed: bool = True) -> None:
@@ -67,6 +74,10 @@ class DailyCounters:
         self.events += 1
         if analyzed:
             self.analyzer_successes += 1
+
+    def record_verifier_call(self) -> None:
+        self._maybe_roll()
+        self.verifier_calls += 1
 
     def record_alert(self) -> None:
         self._maybe_roll()
@@ -78,7 +89,10 @@ class DailyCounters:
 
     @property
     def estimated_cost(self) -> float:
-        return self.analyzer_successes * _ANALYZER_COST_PER_CALL
+        return (
+            self.analyzer_successes * _ANALYZER_COST_PER_CALL
+            + self.verifier_calls * _VERIFIER_COST_PER_CALL
+        )
 
 
 class Pipeline:
@@ -139,10 +153,26 @@ class Pipeline:
         except Exception:
             log.exception("analyzer failed; no observation for this snap")
 
-        # Decide alert (using PRE-record state so mother_returned can fire)
+        # Decide alert (using PRE-record state so mother_returned can fire).
+        # Stale-snap correctness (Codex P2): if this snap is older than the
+        # most recent observation we've already recorded, it's a backfill
+        # frame from analyzer-recovery. The state row reflects FUTURE truth
+        # relative to this snap's ts — running state-relative rules against
+        # it produces nonsense (e.g. mother_returned with absence_seconds=
+        # -300). Pass is_backfill=True so evaluate() skips the time-relative
+        # rules but still fires stateless threat alerts (direct_attack,
+        # predator_near_nest), which remain useful for "what happened
+        # during downtime" via the [BACKFILL +Nm] channel routing.
         pre_state = self.store.get_state()
+        cur = self.store._conn.execute(
+            "SELECT MAX(ts) AS latest FROM observations"
+        )
+        _latest_row = cur.fetchone()
+        _latest_ts = _latest_row["latest"] if _latest_row is not None else None
+        is_backfill = _latest_ts is not None and ts < _latest_ts
         decision = (
-            evaluate(obs, pre_state, self.store, ts) if obs is not None else None
+            evaluate(obs, pre_state, self.store, ts, is_backfill=is_backfill)
+            if obs is not None else None
         )
 
         # Blind Opus second-opinion on CRITICAL/HIGH alerts. Opus runs with the
@@ -156,6 +186,7 @@ class Pipeline:
             and verifier_mod.should_verify(decision)
             and get_settings().verify_alerts_with_opus
         ):
+            self.counters.record_verifier_call()
             try:
                 # Outer 90s belt-and-suspenders bound on the verifier.
                 # verifier.verify_alert() internally awaits analyzer.analyze()

@@ -874,6 +874,60 @@ Fix: downloader `on_snap` now `.set()`s `state_updated` in a `finally` block (ev
 
 ---
 
+### 26. Backfill snaps must skip state-relative rules (Codex round 2, 2026-04-17)
+
+**Incident:** even after §25 fixed `state.py::record()` to skip the derived-state UPDATE for stale snaps, Codex reproduced a related bug at the next layer up. `Pipeline.on_image()` was still calling `evaluate(obs, current_state, store, ts)` for every snap including backfill. State-relative rules (mother_returned, long_absence, egg_loss, lifecycle transitions) compared the stale snap's `ts` against state that reflects FUTURE truth, producing nonsense like a `mother_returned` alert with `absence_seconds=-300`.
+
+**Fix:** `Pipeline.on_image` now detects stale snaps by comparing `ts` against `MAX(observations.ts)` BEFORE calling `evaluate()`, and passes `is_backfill=True`. In `events.py::evaluate`, when `is_backfill=True` we skip:
+- `_lifecycle_event` (state-relative — would mis-fire egg_laying_begin / hatch / fledge)
+- Rule 2 `egg_loss` (compares against state.last_known_egg_count which may have been set after this snap)
+- Rule 4 `long_absence` (uses state.last_mother_seen_ts which may be future)
+- Rule 5 `mother_returned` (uses state.in_absence which may be future)
+
+We KEEP for backfill:
+- Rule 1 `direct_attack` (CRITICAL — observation-only, signals "thrasher's beak in the cup at 14:32 during downtime")
+- Rule 3 `predator_near_nest` (HIGH — observation-only, signals "predator at the nest during downtime")
+
+These remain operationally valuable through the existing `[BACKFILL +Nm]` channel routing in `analyzer_loop.py` — they tell you what happened during analyzer downtime without polluting the live channel.
+
+**Belt-and-suspenders:** rule 5 also got a defense-in-depth check `ts >= state.last_mother_seen_ts`. Even if a future caller forgets to set `is_backfill`, no negative-absence alert can fire.
+
+**Don't regress.** The `is_backfill` plumbing in `Pipeline.on_image` is load-bearing — the stale check `MAX(observations.ts)` matches the same check inside `state.py::record()`'s stale-snap guard, so they fire on the SAME set of snaps. If a future Claude moves either check, they MUST move together. A snap that's "live" for state-write purposes must also be "live" for evaluate purposes, or vice versa — desync would produce silent contradictions (state stays current but alerts get suppressed, or vice versa).
+
+5 new regression tests in `tests/test_events.py` cover this:
+- `test_backfill_snap_does_not_fire_mother_returned_with_negative_absence` (Codex's exact repro)
+- `test_backfill_snap_does_not_fire_long_absence`
+- `test_backfill_snap_still_fires_direct_attack_threat`
+- `test_backfill_snap_still_fires_predator_near_nest`
+- `test_negative_absence_guard_in_mother_returned_belt_and_suspenders`
+
+---
+
+### 27. Cost estimate now accounts for multi-image + verifier (2026-04-17)
+
+`DailyCounters.estimated_cost` and `analytics._system_health` were both pegged at a flat `$0.01`/snap, which was correct in the pre-multi-image era. With `MULTI_IMAGE_ANALYSIS=true` (default since 2026-04-16) per-snap cost is roughly `$0.02` — and the verifier's blind Opus second-opinion adds ~`$0.05` per CRITICAL/HIGH. Heartbeat and analytics reports were materially undercounting real spend.
+
+Fix:
+- `_ANALYZER_COST_PER_CALL` bumped 0.01 → 0.02 in `main.py` and `analytics.py`.
+- `DailyCounters` now tracks `verifier_calls` separately; `Pipeline.on_image` increments the counter when the verifier path runs.
+- `_system_health` in `analytics.py` estimates verifier cost from CRITICAL/HIGH alerts in the window (slight over-count when `verify_alerts_with_opus=False`, accurate otherwise).
+- New `verifier_calls` field in the analytics report dict.
+
+These are estimates — not metered billing. For ground truth, check the Anthropic console at the end of the month.
+
+---
+
+### 28. Watch-items (intentionally not yet fixed)
+
+Things Codex called out as "workable" or "low priority" that we ack and watch but don't preemptively fix:
+
+**a) IR-mode detection keys off Sonnet's free-form summary text** (§24).
+The `_IR_MODE_PHRASES` allowlist in `events.py::observation_indicates_ir_mode` matches phrases like *"IR mode"*, *"infrared"*, *"grayscale IR"*. If Sonnet's prompt or model wording drifts (Anthropic ships a new model variant that says *"low-light view"* instead of *"IR mode"*), the suppression silently degrades and the dusk false-MEDIUM window re-opens. Mitigation: when Sonnet's wording changes (e.g. after an Anthropic model update), spot-check a few evening snap summaries in `evidence/<today>/` and extend the phrase list as needed. A more durable fix would add a structured `is_ir_mode` boolean to the `NestObservation` schema and have the analyzer prompt set it explicitly. Defer until production drift surfaces.
+
+**b) Cost estimates remain rough.** Per-snap cost varies with prompt-cache hit rate (2026-04-15+ Anthropic SDK has caching), image size, and output token count. The constants are ballpark. If a heartbeat shows wildly different spend from the Anthropic console, recalibrate the constants from observed billing rather than re-deriving them from the prompt.
+
+---
+
 ## Cost levers (when daily heartbeat shows spend climbing)
 
 Current realistic spend at the 2026-04-15 settings (single-tier Sonnet, 5/1/30 min dynamic cadence): **~$90/month**. Heartbeat reports cost-to-date.
@@ -911,7 +965,7 @@ Knobs in order of smallest impact first:
 
 ## Verifying before claiming "it works"
 
-1. `TEST_MODE=true python -m pytest tests/ -v` → all 140 tests pass (109 unit + 31 integration). Includes the lifecycle 6-stage tests, IR-mode suppression tests, and the 5 codex review regression guards.
+1. `TEST_MODE=true python -m pytest tests/ -v` → all 145 tests pass (114 unit + 31 integration). Includes the lifecycle 6-stage tests, IR-mode suppression tests, the codex round-1 regression guards (stale-snap, nest_visible, confidence filter, downloader cadence), and the codex round-2 backfill-eval guards (mother_returned negative-absence, long_absence on stale, threat alerts still fire on stale).
 2. `launchctl list | grep cardinalnest` → both `com.cardinalnest.downloader` and `com.cardinalnest.analyzer` show PIDs + exit code 0.
 3. `tail ~/Library/Logs/cardinal-nest-monitor/downloader.out.log` → `Blink connected; N cameras`, `downloader watchdog started`.
 4. `tail ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log` → `spool consumer started`, `feed_worker started`, `analytics_scheduler started`, `watchdog started`.

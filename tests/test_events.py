@@ -444,3 +444,129 @@ def test_medium_suppressed_when_image_is_ir_outside_quiet_hours(store, monkeypat
         "MEDIUM must be suppressed when analyzer indicates IR mode, "
         "regardless of wall-clock quiet_hours."
     )
+
+
+# ── Codex P2: backfill snaps must NOT fire state-relative rules ──────
+
+def test_backfill_snap_does_not_fire_mother_returned_with_negative_absence(store):
+    """Reproduces Codex P2: an older on-nest backfill snap landing AFTER a
+    newer "mom is gone" snap was incorrectly firing mother_returned with a
+    negative absence_seconds because evaluate() was using the future state.
+
+    With is_backfill=True the rule must be skipped entirely.
+    """
+    t_now = time.time()
+    # Simulate the live snap that flipped in_absence=True at t_now-100.
+    store.record(t_now - 400, False, None, _make_obs(), None)  # she was here
+    out = _make_obs(
+        cardinal_on_nest="false", mother_cardinal_present="false",
+        species_detected=[], summary="Nest empty.",
+    )
+    live_state = store.record(t_now - 100, False, None, out, None)
+    assert live_state.in_absence is True
+
+    # Now a STALE backfill snap from t_now-300 (BEFORE the absence started).
+    stale_ts = t_now - 300
+    on_nest = _make_obs(cardinal_on_nest="true", summary="Old: she was here.")
+    pre_state = store.get_state()
+
+    # Without is_backfill=True, the old code would fire mother_returned with
+    # absence_seconds = stale_ts - last_mother_seen_ts = (t-300) - (t-400) =
+    # +100, OR negative if state.last_mother_seen_ts was newer. With the
+    # belt-and-suspenders ts < last_mother_seen_ts guard, no negative-
+    # absence alert can fire even without is_backfill.
+    decision = evaluate(on_nest, pre_state, store, stale_ts, is_backfill=True)
+    assert decision is None, (
+        "Backfill snap must not fire mother_returned (state-relative)."
+    )
+
+
+def test_backfill_snap_does_not_fire_long_absence(store):
+    """Backfill snap must not fire MEDIUM long_absence.
+
+    State reflects future truth — applying it to an older snap would
+    report the wrong absence duration, possibly firing on a snap from
+    a window when she was demonstrably present.
+    """
+    t_now = time.time()
+    store.record(t_now - 1000, False, None, _make_obs(), None)
+    # Live snap: she's gone, MEDIUM-eligible.
+    out = _make_obs(
+        cardinal_on_nest="false", mother_cardinal_present="false",
+        species_detected=[], summary="Nest empty.",
+    )
+    store.record(t_now, False, None, out, None)
+
+    # Backfill snap from 500s ago, also showing absence.
+    stale_ts = t_now - 500
+    pre_state = store.get_state()
+    decision = evaluate(out, pre_state, store, stale_ts, is_backfill=True)
+    assert decision is None or decision.rule_id != "long_absence"
+
+
+def test_backfill_snap_still_fires_direct_attack_threat(store):
+    """Backfill snap with a thrasher's beak in the cup MUST still fire
+    CRITICAL direct_attack — observation-only rule, doesn't depend on
+    state-relative comparisons. Operationally important for "what
+    happened during downtime" via the [BACKFILL +Nm] channel."""
+    t_now = time.time()
+    store.record(t_now - 1000, False, None, _make_obs(), None)
+    pre_state = store.get_state()
+
+    threat = _make_obs(
+        cardinal_on_nest="false", mother_cardinal_present="false",
+        threat_species_detected=["brown_thrasher"],
+        species_detected=["brown_thrasher"],
+        near_nest_activity=True,
+        direct_nest_interaction=True,
+        confidence=0.85,
+        summary="Brown thrasher beak in nest cup.",
+    )
+    decision = evaluate(threat, pre_state, store, t_now - 500, is_backfill=True)
+    assert decision is not None
+    assert decision.severity == Severity.CRITICAL
+    assert decision.rule_id == "direct_attack"
+
+
+def test_backfill_snap_still_fires_predator_near_nest(store):
+    """Backfill predator-near-nest HIGH alert must still fire — observation-
+    only, useful operationally."""
+    t_now = time.time()
+    store.record(t_now - 1000, False, None, _make_obs(), None)
+    pre_state = store.get_state()
+    threat = _make_obs(
+        cardinal_on_nest="false", mother_cardinal_present="false",
+        threat_species_detected=["brown_thrasher"],
+        species_detected=["brown_thrasher"],
+        near_nest_activity=True,
+        direct_nest_interaction=False,
+        confidence=0.85,
+        summary="Brown thrasher on the bush near the nest.",
+    )
+    decision = evaluate(threat, pre_state, store, t_now - 500, is_backfill=True)
+    assert decision is not None
+    assert decision.severity == Severity.HIGH
+    assert decision.rule_id == "predator_absent"
+
+
+def test_negative_absence_guard_in_mother_returned_belt_and_suspenders(store):
+    """Even when is_backfill is NOT set (caller forgot), rule 5 must never
+    fire with negative absence_seconds. Defense-in-depth against future
+    callers passing the wrong flag."""
+    t_now = time.time()
+    store.record(t_now - 100, False, None, _make_obs(), None)  # she's here at t-100
+    out = _make_obs(
+        cardinal_on_nest="false", mother_cardinal_present="false",
+        species_detected=[], summary="Nest empty.",
+    )
+    state_after_absence = store.record(t_now, False, None, out, None)
+    # Manually flip in_absence so the rule's other preconditions are met.
+    store._conn.execute(
+        "UPDATE state SET in_absence=1, last_mother_seen_ts=? WHERE id=1",
+        (t_now,),
+    )
+    pre_state = store.get_state()
+    on_nest = _make_obs(cardinal_on_nest="true", summary="snap.")
+    # ts < state.last_mother_seen_ts → would yield negative absence
+    decision = evaluate(on_nest, pre_state, store, t_now - 500, is_backfill=False)
+    assert decision is None or decision.rule_id != "mother_returned"

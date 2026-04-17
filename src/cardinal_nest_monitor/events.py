@@ -295,11 +295,27 @@ def evaluate(
     state: NestState,
     store: StateStore,
     ts: float,
+    is_backfill: bool = False,
 ) -> AlertDecision | None:
-    # ── Lifecycle event (fires BEFORE universal gates; always safe) ────
-    lifecycle_alert = _lifecycle_event(observation, state, store, ts)
-    if lifecycle_alert is not None:
-        return lifecycle_alert
+    """Evaluate one observation against the (pre-record) state.
+
+    is_backfill=True (Codex P2): the snap is older than the most recent
+    observation we've already recorded — i.e. a backfill frame from
+    analyzer-recovery. The state row reflects FUTURE truth relative to
+    this snap. State-relative rules (egg_loss, long_absence,
+    mother_returned, lifecycle transitions) would compare snap-time
+    facts against future state and produce nonsense (e.g. mother_returned
+    with absence_seconds=-300). For backfill snaps we only fire OBSERVATION-
+    ONLY rules: direct_attack and predator_near_nest. Those remain
+    operationally valuable — "during downtime a thrasher was at the nest"
+    is something the user wants to know, and the [BACKFILL +Nm] channel
+    routing makes it visible without polluting the live alert channel.
+    """
+    # ── Lifecycle event (skip on backfill — state-relative) ────────────
+    if not is_backfill:
+        lifecycle_alert = _lifecycle_event(observation, state, store, ts)
+        if lifecycle_alert is not None:
+            return lifecycle_alert
 
     # ── Universal gates ────────────────────────────────────────────────
     if observation.confidence < _MIN_CONFIDENCE:
@@ -330,8 +346,13 @@ def evaluate(
         return None
 
     # ── Rule 2: Egg loss (CRITICAL, 5 min) ────────────────────────────
+    # Skip on backfill: comparing a snap-time egg count against
+    # state.last_known_egg_count (which may have been set AFTER this snap)
+    # produces a meaningless comparison. The historical drop, if real, was
+    # already detected when the live snap landed.
     if (
-        observation.eggs_visible == "true"
+        not is_backfill
+        and observation.eggs_visible == "true"
         and observation.egg_count_estimate is not None
         and state.last_known_egg_count is not None
         and observation.egg_count_estimate < state.last_known_egg_count
@@ -412,7 +433,8 @@ def evaluate(
     # Also suppressed during the feeding stage if a feeding event occurred
     # recently — mom is expected to be away feeding chicks, not a crisis.
     if (
-        absence is not None
+        not is_backfill  # state-relative — meaningless on stale snaps
+        and absence is not None
         and absence >= _LONG_ABSENCE_THRESHOLD
         and not threats
         and observation.cardinal_on_nest != "true"
@@ -452,10 +474,20 @@ def evaluate(
         return None
 
     # ── Rule 5: Mother returned (LOW, once per absence ≥ 5 min) ──────
+    # Skip on backfill: state.in_absence reflects FUTURE truth for stale
+    # snaps, so this rule would fire mother_returned with a negative
+    # absence_seconds (the snap is older than the last mother sighting
+    # that established the current in_absence flag). Codex P2 reproduced
+    # this with absence_seconds=-300.
     if (
-        observation.cardinal_on_nest == "true"
+        not is_backfill
+        and observation.cardinal_on_nest == "true"
         and state.in_absence
         and state.last_mother_seen_ts is not None
+        # Belt-and-suspenders: even outside backfill mode, never fire if
+        # this snap is older than the recorded last sighting (would yield
+        # a negative absence_seconds — non-sensical alert).
+        and ts >= state.last_mother_seen_ts
     ):
         if not store.cooldown_active(Severity.LOW, None, _MOTHER_RETURN_COOLDOWN, ts=ts):
             sev = Severity.LOW
