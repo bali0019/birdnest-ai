@@ -571,7 +571,9 @@ Automatic detection of egg hatch → feeding → fledge transitions. The problem
 
 **2-sighting confirmation guard (load-bearing):** a single chick sighting does NOT transition the stage. The 1st confirming signal (`chicks_visible="true"` OR `mother_feeding_chicks=true`) sets `state.first_chick_sighting_ts`. A 2nd confirming signal within 4 hours triggers the transition and fires the 🐣 alert. A 2nd signal OUTSIDE the 4-hour window is treated as a fresh "1st sighting" (the prior one was stale). This protects against a one-off analyzer misread triggering a false 🐣 alert. Cost: hatch detection is delayed by one snap interval (~30s-1min during burst, ~5min during normal cadence) — acceptable since the operational benefit is "stop firing false MEDIUMs during feeding" not "fire 🐣 within milliseconds of first chick sighting."
 
-**Dedicated Discord channel**: 🐣/🦅 events route to `DISCORD_LIFECYCLE_WEBHOOK_URL` (if configured) instead of the urgent alerts channel. Keeps the urgent channel focused on threats. Backfill routing takes precedence over lifecycle routing (a stale backfilled hatch alert gets `[BACKFILL +Nm]` tag on the backfill channel rather than appearing as live on the lifecycle channel).
+**Dedicated Discord channel**: 🥚/🪺/🐣/🦅 events all route to `DISCORD_LIFECYCLE_WEBHOOK_URL` (if configured) instead of the urgent alerts channel. The notifier rule_id allowlist for this routing is in `notifier.py::send_alert` and currently includes `egg_laying_begin`, `incubation_begin`, `hatch`, and `fledge` — extend this list when adding new lifecycle alerts. Keeps the urgent channel focused on threats. Backfill routing takes precedence over lifecycle routing (a stale backfilled hatch alert gets `[BACKFILL +Nm]` tag on the backfill channel rather than appearing as live on the lifecycle channel).
+
+**Daily heartbeat embed shows lifecycle state.** When `LIFECYCLE_TRACKING_ENABLED=true`, the noon heartbeat embed in `notifier.send_heartbeat` includes a "Lifecycle" field with the current stage and a day counter — e.g. `Egg Laying · Day 2 of ~4`, `Incubation · Day 5 of ~12`, `Feeding · Day 7 of ~14`. Day labels come from `main._lifecycle_day_label(state)`, which keys off `egg_laying_started_ts` / `incubation_started_ts` / `hatch_detected_ts` / `fledge_detected_ts`. Stages without a canonical countdown (`building_nest`, `empty`) render the stage name only. The label gracefully drops out if lifecycle tracking is disabled.
 
 **Detection approach — camera angle constrained:**
 
@@ -782,6 +784,17 @@ python -m cardinal_nest_monitor.tools.test_discord                          # �
 python -m cardinal_nest_monitor.tools.dryrun --image evidence/SAMPLE.jpg    # pipeline against local JPEG
 python -m cardinal_nest_monitor                                             # full system, foreground; Ctrl+C to stop
 
+# ── Lifecycle backfill (one-shot, see §23) ────────────────────────
+# Auto-infer egg_laying_started_ts + incubation_started_ts from observation
+# history (looks for earliest 24h window with ≥70% sitting ratio):
+python -m cardinal_nest_monitor.tools.lifecycle_backfill --dry-run --auto
+python -m cardinal_nest_monitor.tools.lifecycle_backfill --auto
+# Manual override (when --auto can't find a qualifying window):
+python -m cardinal_nest_monitor.tools.lifecycle_backfill \
+    --incubation-started 2026-04-14T00:00 \
+    --egg-laying-started 2026-04-13
+# Idempotent — re-runs without --force are no-ops.
+
 # ── Re-auth Blink (token expired or stale) ───────────────────────
 rm -f /tmp/cardinal_nest_blink_pin
 python -m cardinal_nest_monitor --auth-only &
@@ -898,7 +911,7 @@ Knobs in order of smallest impact first:
 
 ## Verifying before claiming "it works"
 
-1. `TEST_MODE=true python -m pytest tests/ -v` → all 122 tests pass (91 unit + 31 integration).
+1. `TEST_MODE=true python -m pytest tests/ -v` → all 140 tests pass (109 unit + 31 integration). Includes the lifecycle 6-stage tests, IR-mode suppression tests, and the 5 codex review regression guards.
 2. `launchctl list | grep cardinalnest` → both `com.cardinalnest.downloader` and `com.cardinalnest.analyzer` show PIDs + exit code 0.
 3. `tail ~/Library/Logs/cardinal-nest-monitor/downloader.out.log` → `Blink connected; N cameras`, `downloader watchdog started`.
 4. `tail ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log` → `spool consumer started`, `feed_worker started`, `analytics_scheduler started`, `watchdog started`.
