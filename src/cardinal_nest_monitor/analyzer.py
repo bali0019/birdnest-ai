@@ -138,14 +138,37 @@ Be CONSERVATIVE. The default is false. Only report true when there is unambiguou
 
 Feeding trips are short (30-120 seconds at the nest) and frequent (every 10-30 min during the feeding stage). Brief absences after hatching are expected and normal, not alarming.
 
+== Narrow cardinal prior — READ CAREFULLY ==
+This camera watches a Northern Cardinal nest; the nesting female visits the cup many times a day and her back, wing, and tail are often in view from behind or the side while she settles or broods. The crest often lies flat on the head when she's on the nest, so "no crest visible" is NOT sufficient reason to reject a cardinal ID.
+
+When ALL of the following are true, treat the bird as the female cardinal (cardinal_on_nest="true" at confidence 0.55–0.65) even if the crest, face, and beak are not visible:
+  A. The whole body profile of a small compact songbird (~21 cm) is clearly visible sitting IN or ON the nest cup — not just a fragment behind foliage.
+  B. You can see at least ONE of these cardinal plumage features unambiguously:
+       • A warm REDDISH, ORANGE, or RUSTY-PINK tint on the wing, rump, or tail (the most reliable single cue).
+       • The short ORANGE beak in profile.
+       • The dark face mask around the beak base.
+       • A visible crest silhouette (even laid flat).
+  C. No thrasher features are present: no heavy dark breast streaking, no long tail exceeding the body, no bright yellow eye, no sharply down-curved beak.
+
+When this prior fires, clamp confidence to the range 0.55–0.65 — never higher from this reasoning alone. If other cues (crest clearly visible, orange beak clearly visible) push toward stronger ID, confidence may go higher but that is not this prior.
+
+DO NOT apply this prior when:
+  • The body is so obscured by foliage/branches that you can only see a fragment (a patch of brown/tan without a recognizable body silhouette). In that case → cardinal_on_nest="uncertain".
+  • The bird's body shape or size isn't clearly consistent with a small songbird (e.g. larger bird, a mammal shape, an unclear blob).
+  • You can see ANY thrasher feature.
+  • The frame is infrared/night mode (the IR rules above always win — stay "uncertain" there).
+
+When in doubt between this prior and "uncertain", choose "uncertain". The prior is meant to stop false HIGH alerts on clearly-visible mom-on-nest frames where we only see her back/wing; it is NOT meant to rescue heavily-occluded frames.
+
 == User's risk posture ==
 The user prefers FALSE ALARMS over MISSED THREATS. Decision rules:
   - Bird at nest + red crest clearly visible → female cardinal, NOT a threat, no species in threat_species_detected.
   - Bird at nest + thrasher features clearly visible (no crest, streaked breast, long tail, yellow eye) → threat_species_detected=["brown_thrasher"].
-  - Bird at nest + species ambiguous (can't clearly see the red crest OR thrasher features) → threat_species_detected=["unknown"], confidence reflects scene-reliability (usually 0.80+), near_nest_activity=true, direct_nest_interaction=false unless clearly reaching into cup.
+  - Bird at nest + narrow-cardinal-prior conditions A+B+C all met → cardinal_on_nest="true" at confidence 0.55–0.65, no threat species.
+  - Bird at nest + species ambiguous (prior conditions not met, no clearly-visible crest OR thrasher features) → threat_species_detected=["unknown"], confidence reflects scene-reliability (usually 0.80+), near_nest_activity=true, direct_nest_interaction=false unless clearly reaching into cup.
   - No bird visible at nest → empty nest observation, no threats.
 
-Missing a real predator is far worse than sending a redundant HIGH alert. Never default to "cardinal" when you can't clearly see the cardinal's crest.
+Missing a real predator is far worse than sending a redundant HIGH alert. Do NOT apply the cardinal prior to a vague brownish shape behind foliage — that must remain "uncertain".
 
 Return ONLY the report_nest tool call."""
 
