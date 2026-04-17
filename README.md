@@ -28,7 +28,7 @@ The status badge at the top of this page updates as she moves through these stag
 
 ## What the system sees
 
-The camera takes a fresh photo every one to five minutes. Each image goes to Claude Sonnet 4.6, Anthropic's vision model, which returns a structured observation: is the cardinal present, are the eggs visible, is anything threatening near the nest.
+The camera takes a fresh photo on a schedule that adapts to what's happening. Five minutes when she's on the nest. One minute when she's away. Thirty seconds for the first three minutes after she leaves, when the predation risk is highest. Thirty minutes overnight, when she sleeps on the eggs. Each image goes to Claude Sonnet 4.6, Anthropic's vision model, which returns a structured observation: is the cardinal present, are the eggs visible, is anything threatening near the nest.
 
 Most of the time, the answer is boring.
 
@@ -168,7 +168,7 @@ The female cardinal and the Brown Thrasher are both brownish birds. The analyzer
 - macOS with Python 3.11+
 - [Blink Outdoor](https://blinkforhome.com/) camera pointed at the nest
 - [Anthropic API key](https://console.anthropic.com/) with Sonnet 4.6 + Opus 4.7 access
-- Discord server with webhook URLs for up to 4 channels
+- Discord server with webhook URLs for up to 5 channels (alerts is required, the other four are optional but recommended). One additional webhook for a dedicated test channel if you plan to run the integration suite
 
 ### Install
 
@@ -219,6 +219,97 @@ source venv/bin/activate
 TEST_MODE=true python -m pytest tests/ -v
 # 156 tests. All must pass before deploying any change.
 ```
+
+## Running it locally
+
+The two LaunchAgent services are the production deploy. For development you can run the same code in the foreground:
+
+```bash
+source venv/bin/activate
+
+# Combined: both downloader and analyzer in one process. Easiest for dev.
+python -m cardinal_nest_monitor --role combined
+
+# Or run them separately, the way the launchd plists do:
+python -m cardinal_nest_monitor --role downloader   # in one terminal
+python -m cardinal_nest_monitor --role analyzer     # in another
+```
+
+Ctrl+C shuts down cleanly. The downloader will keep writing to the spool, the analyzer will keep draining it; they coordinate through `data/state.sqlite` in WAL mode.
+
+## Useful commands
+
+```bash
+# Smoke test the Discord webhook
+python -m cardinal_nest_monitor.tools.test_discord
+
+# Run the full pipeline against a single local JPEG, no live camera needed.
+# Useful when iterating on the analyzer prompt.
+python -m cardinal_nest_monitor.tools.dryrun --image evidence/reference/historical_thrasher_1.jpg
+
+# Pause snap capture before walking near the nest. Cleared automatically.
+python -m cardinal_nest_monitor.tools.pause 10        # pause for 10 minutes
+python -m cardinal_nest_monitor.tools.pause --clear   # resume now
+
+# Fire a single behavior analytics report on demand
+python -m cardinal_nest_monitor.tools.analytics_once
+
+# Backfill lifecycle timestamps from observation history
+python -m cardinal_nest_monitor.tools.lifecycle_backfill --auto --dry-run
+python -m cardinal_nest_monitor.tools.lifecycle_backfill --auto
+
+# Real-image regression suite for analyzer prompt changes (~$0.40 per run)
+python -m cardinal_nest_monitor.tools.lifecycle_regression
+```
+
+## Testing safely
+
+The integration suite posts real Discord embeds. To keep the live alert channels clean during test runs, route every test post to a dedicated test channel:
+
+```bash
+# In .env, alongside the production webhooks:
+DISCORD_TEST_WEBHOOK_URL=https://discord.com/api/webhooks/.../...
+
+# Then:
+TEST_MODE=true python -m pytest tests/ -v
+```
+
+When `TEST_MODE=true`, the autouse fixture in `tests/integration/conftest.py` rewrites `discord_webhook_url`, `discord_feed_webhook_url`, and `discord_analytics_webhook_url` to point at the test webhook for the duration of every test. Every test embed is also prefixed with `[TEST]` and footed with the run timestamp so it's visually distinct in Discord. If `DISCORD_TEST_WEBHOOK_URL` is unset, the integration tests fail with a clear error rather than risk leaking into production channels.
+
+## Logs and operations
+
+```bash
+# Tail the live logs (separate per service)
+tail -F ~/Library/Logs/cardinal-nest-monitor/downloader.out.log
+tail -F ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log
+
+# Restart just the analyzer (most code changes only need this)
+launchctl kickstart -k gui/$(id -u)/com.cardinalnest.analyzer
+
+# Restart just the downloader (rare; only when blink_client.py changes)
+launchctl kickstart -k gui/$(id -u)/com.cardinalnest.downloader
+
+# Inspect the current state row
+sqlite3 data/state.sqlite "SELECT * FROM state WHERE id = 1;"
+
+# Recent alerts
+sqlite3 data/state.sqlite "SELECT ts, severity, rule_id, species, title FROM alerts ORDER BY ts DESC LIMIT 10;"
+```
+
+## Config that matters
+
+Most of the `.env` is set-and-forget. The handful that change the shape of the system:
+
+| Variable | What it does |
+|---|---|
+| `LIFECYCLE_TRACKING_ENABLED` | Default `true`. Set `false` as an escape hatch if a lifecycle false-positive ever fires; no code deploy needed |
+| `VERIFY_ALERTS_WITH_OPUS` | Default `true`. Blind Opus 4.7 second opinion on every CRITICAL/HIGH. ~$0.05 per verified alert. Disable to fall back to single-pass alerting |
+| `DISCORD_LIFECYCLE_WEBHOOK_URL` | Routes 🥚/🪺/🐣/🦅 transition alerts to a dedicated celebration channel. Empty = lifecycle alerts go to the urgent channel |
+| `DISCORD_BACKFILL_WEBHOOK_URL` | Routes alerts on stale snaps (analyzer-recovery backlog) to a separate channel tagged `[BACKFILL +Nm]`. Empty = backfill alerts are suppressed entirely |
+| `DISCORD_TEST_WEBHOOK_URL` | Required for the integration test suite. Every `[TEST]` embed routes here so production channels stay clean |
+| `MULTI_IMAGE_ANALYSIS` | Default `true`. Sends three crops per snap (full + center-zoom + overview) for better recall on subtle thrasher features. Disable to halve Anthropic spend at the cost of recall |
+
+See [`.env.example`](./.env.example) for the full list with documentation.
 
 ## Tech stack
 
