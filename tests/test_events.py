@@ -378,3 +378,69 @@ def test_medium_fires_outside_quiet_hours(store, monkeypatch):
     assert decision is not None, "MEDIUM must fire outside quiet hours"
     assert decision.severity == Severity.MEDIUM
     assert decision.rule_id == "long_absence"
+
+
+def test_observation_indicates_ir_mode_detects_real_phrases():
+    """observation_indicates_ir_mode() must catch the IR phrasings Sonnet
+    actually produces in production. Regression: see
+    evidence/2026-04-16/20-48-07_MEDIUM_unknown_bird/observation.json for the
+    canonical false-positive that motivated this helper.
+    """
+    from cardinal_nest_monitor.events import observation_indicates_ir_mode
+
+    real_ir_summaries = [
+        "A compact bird is settled low in the nest cup at night in IR mode",
+        "Infrared night image shows a compact bird settled low in the nest cup",
+        "A compact bird is sitting low in the nest cup on a night IR frame",
+        "Nighttime IR image shows a bird-sized mass settled low",
+        "grayscale IR rendering",
+        "night vision shows nothing",
+    ]
+    for summary in real_ir_summaries:
+        obs = _make_obs(summary=summary)
+        assert observation_indicates_ir_mode(obs), (
+            f"Should detect IR in: {summary!r}"
+        )
+
+    # Daylight summary must NOT be detected as IR.
+    obs = _make_obs(summary="Female cardinal sitting on the nest in daylight.")
+    assert not observation_indicates_ir_mode(obs)
+
+
+def test_medium_suppressed_when_image_is_ir_outside_quiet_hours(store, monkeypatch):
+    """MEDIUM long_absence must NOT fire when the analyzer reports IR mode,
+    even when the wall clock is outside the configured quiet_hours window.
+
+    Real-world case: in April-Atlanta the Blink camera switches to IR at
+    sunset (~20:00) but quiet_hours doesn't begin until 23:00. During that
+    ~3h gap the old rule fired false MEDIUMs as the absence counter
+    accumulated despite Sonnet correctly seeing 'a compact bird in the
+    nest cup'. Replays the canonical evidence/2026-04-16/20-48-07_... case.
+    """
+    from cardinal_nest_monitor.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "quiet_hours", "")  # disable quiet hours entirely
+
+    t0 = time.time()
+    store.record(t0, False, None, _make_obs(), None)
+    ir_uncertain = _make_obs(
+        cardinal_on_nest="uncertain",
+        mother_cardinal_present="uncertain",
+        species_detected=["unknown bird"],
+        threat_species_detected=[],
+        near_nest_activity=True,
+        confidence=0.62,
+        summary=(
+            "A compact bird is settled low in the nest cup at night in IR mode "
+            "— body posture and size are consistent with the incubating female "
+            "cardinal, but the crest is not clearly visible and species "
+            "cannot be confirmed; no threat features apparent."
+        ),
+    )
+    state = store.record(t0 + 1900, False, None, ir_uncertain, None)
+    decision = evaluate(ir_uncertain, state, store, t0 + 1900)
+    assert decision is None, (
+        "MEDIUM must be suppressed when analyzer indicates IR mode, "
+        "regardless of wall-clock quiet_hours."
+    )

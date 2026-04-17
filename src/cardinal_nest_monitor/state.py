@@ -226,14 +226,19 @@ class StateStore:
         incubation_started_ts = _opt("incubation_started_ts")
 
         if observation is not None and observation.confidence >= _MIN_CONFIDENCE:
-            # During quiet hours, require higher confidence to flip in_absence.
+            # During quiet hours OR whenever the camera is in IR mode, require
+            # higher confidence (≥0.75) to flip in_absence or update presence.
             # IR night images produce unreliable 0.60-0.70 "empty nest" readings
-            # that would wastefully tighten cadence to 1-min overnight.
+            # that would wastefully tighten cadence to 1-min and potentially
+            # fire false MEDIUMs. The IR check covers the sunset→23:00 gap
+            # when the camera has switched to IR but quiet_hours hasn't begun.
             from datetime import datetime as _dt
+            from cardinal_nest_monitor.events import observation_indicates_ir_mode
             _quiet_now = get_settings().in_quiet_hours(
                 _dt.fromtimestamp(ts).time()
             )
-            _conf_ok = not _quiet_now or observation.confidence >= 0.75
+            _ir_now = observation_indicates_ir_mode(observation)
+            _conf_ok = (not _quiet_now and not _ir_now) or observation.confidence >= 0.75
 
             if observation.cardinal_on_nest == "true" and _conf_ok:
                 last_mother_seen_ts = ts

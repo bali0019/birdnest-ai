@@ -72,6 +72,35 @@ def _smart_filter_drop(obs: NestObservation) -> bool:
     )
 
 
+# Phrases Sonnet uses when the snap is in Blink's IR/night mode. The Blink
+# Outdoor camera switches to IR at sunset (~20:00 in April-Atlanta), but our
+# wall-clock quiet_hours window doesn't start until 23:00 — leaving a ~3h
+# gap where IR is on, the cardinal is hard to ID in grayscale, and the old
+# rules would fire false MEDIUMs as the absence counter accumulated. See
+# evidence/2026-04-16/20-48-07_MEDIUM_unknown_bird/ for the canonical case.
+_IR_MODE_PHRASES = (
+    "ir mode",
+    "ir image",
+    "ir frame",
+    "infrared",
+    "grayscale",
+    "night vision",
+    "night ir",
+    "in ir",  # "settled in IR" / "in IR mode" loose match
+)
+
+
+def observation_indicates_ir_mode(obs: NestObservation) -> bool:
+    """True when the analyzer's own description indicates an IR/night image.
+
+    We trust Sonnet's text because it consistently mentions IR / grayscale /
+    infrared / night vision when the Blink camera has switched to night mode.
+    Cheaper and more reliable than re-decoding the JPEG to check grayscale-ness.
+    """
+    text = (obs.summary or "").lower()
+    return any(phrase in text for phrase in _IR_MODE_PHRASES)
+
+
 def _cooldown_blocks(
     store: StateStore,
     severity: Severity,
@@ -379,6 +408,13 @@ def evaluate(
         and observation.cardinal_on_nest != "true"
         and not get_settings().in_quiet_hours(datetime.fromtimestamp(ts).time())
         and not _feeding_suppresses_medium(state, ts)
+        # IR-mode suppression: when the camera is in IR (sunset → 23:00 quiet
+        # hours start), Sonnet can see "a compact bird in the cup" but cannot
+        # confirm species because the cardinal's plumage blends with the nest
+        # in grayscale. Returning "uncertain" is correct — but we shouldn't
+        # treat that as continuing absence. Same reasoning as quiet-hours
+        # suppression; just triggered by the image signal instead of the clock.
+        and not observation_indicates_ir_mode(observation)
     ):
         sev = Severity.MEDIUM
         if not _cooldown_blocks(store, sev, None, _CD_LONG_ABSENCE, ts):
