@@ -354,8 +354,28 @@ class NestState(BaseModel):
     absence_started_ts: float | None = None
 
     # Lifecycle tracking (2026-04-16).
-    lifecycle_stage: Literal["incubation", "feeding", "fledging", "empty"] = "incubation"
+    # Full stage progression (earliest → latest):
+    #   building_nest → egg_laying → incubation → feeding → fledging → empty
+    # Stages are one-way; once past a stage we don't go back. For the current
+    # monitored brood the system was deployed AFTER building finished and
+    # during/at the tail of egg_laying, so the backfill tool sets
+    # egg_laying_started_ts + incubation_started_ts from observation history
+    # rather than ever observing building_nest in production.
+    lifecycle_stage: Literal[
+        "building_nest",
+        "egg_laying",
+        "incubation",
+        "feeding",
+        "fledging",
+        "empty",
+    ] = "incubation"
     last_chick_count: int | None = None
+    # When the bird transitioned INTO egg_laying (first sitting observed).
+    # Cardinals lay 1 egg per day for 3-4 days before starting full incubation.
+    egg_laying_started_ts: float | None = None
+    # When the bird transitioned INTO incubation (sustained sitting observed).
+    # ~12 day countdown to hatch begins here.
+    incubation_started_ts: float | None = None
     hatch_detected_ts: float | None = None  # set when 2nd confirming chick signal arrives
     fledge_detected_ts: float | None = None  # set on fledge transition
     last_feeding_event_ts: float | None = None  # set on mother_feeding_chicks=true

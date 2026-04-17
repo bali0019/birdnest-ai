@@ -585,12 +585,52 @@ The Blink Outdoor camera is mounted on siding pointing at the rose bush at eye-l
 **State machine (auto-transitions in `state.py::record()`):**
 
 ```
-incubation → feeding: chicks_visible="true" OR mother_feeding_chicks=true
-feeding → fledging:   12+ hours with no cardinal visits AND no threat in 48h
-fledging → empty:     72 hours of no activity
+building_nest → egg_laying → incubation → feeding → fledging → empty
 ```
 
-All transitions are one-way. Once we're past incubation, we don't go back.
+- `building_nest → egg_laying`: first confident `cardinal_on_nest=true`
+- `egg_laying → incubation`: ≥70% `cardinal_on_nest=true` ratio over a 24h rolling window (min 24 confident samples)
+- `incubation → feeding`: `chicks_visible="true"` OR `mother_feeding_chicks=true` (2-sighting confirmed)
+- `feeding → fledging`: 12+ hours with no cardinal visits AND no threat in 48h
+- `fledging → empty`: 72 hours of no activity
+
+All transitions are one-way. Once we've moved forward, we don't go back.
+
+**Egg-laying stage (user's real experience):**
+
+When the system was first built, the cardinal was not on the nest at night. The camera showed an empty cup, hour after hour. The user panicked — convinced the mother had abandoned the eggs.
+
+Female cardinals lay one egg per day over 3–4 days. During this laying phase they do not incubate — they visit briefly to lay, then leave. Full incubation only begins AFTER the last egg is down.
+
+The system's old 4-stage model didn't represent this; it fired MEDIUM "absence" alerts all night during laying. Adding `egg_laying` as a first-class state fixes this: during `egg_laying`, "mom is gone for hours overnight" is expected behavior, NOT an alarm. The MEDIUM long_absence rule checks `lifecycle_stage` and suppresses in `egg_laying`.
+
+**Auto-transition: `building_nest → egg_laying`:**
+
+Trigger: first confident `cardinal_on_nest=true` observation. Fires a LOW alert `egg_laying_begin` with title "🥚 Egg laying has begun" to the lifecycle Discord channel.
+
+Default stage for brand-new deployments is still `incubation` (not `building_nest`) — most users deploy AFTER discovering an existing nest. Manual operators who deploy during nest-building can set `lifecycle_stage='building_nest'` via the backfill tool.
+
+**Auto-transition: `egg_laying → incubation`:**
+
+Trigger: ≥70% `cardinal_on_nest=true` ratio over any 24h rolling window of confident observations (minimum 24 samples).
+
+Why 70% and not 95% (which would match true incubation behavior): IR night suppression, quiet-hours cadence, and analyzer uncertainty all push the signal down. 70% is the empirical boundary between "visits to lay" and "sustained sitting."
+
+Logic lives in BOTH `state.py::record()` (performs the state write) AND `events.py::_lifecycle_event` (predicts the transition to fire the alert on the same snap). They must stay in sync — if you change the threshold or sample-count rule in one, change it in the other in the same commit.
+
+Fires a LOW alert `incubation_begin` with title "🪺 Incubation has begun" to the lifecycle Discord channel.
+
+**Backfill tool: `tools/lifecycle_backfill.py`:**
+
+Usage:
+```bash
+python -m cardinal_nest_monitor.tools.lifecycle_backfill --auto
+# or manual:
+python -m cardinal_nest_monitor.tools.lifecycle_backfill \
+  --incubation-started 2026-04-15 --egg-laying-started 2026-04-11
+```
+
+Idempotent; refuses to overwrite set values without `--force`. For the current monitored brood, the user ran `--auto` to populate `egg_laying_started_ts` and `incubation_started_ts` from observation history (cardinal was already past building_nest when monitoring began on 2026-04-13; transitioned to incubation ~2026-04-15).
 
 **Events fired:**
 
@@ -601,7 +641,7 @@ All transitions are one-way. Once we're past incubation, we don't go back.
 **Schema additions:**
 
 - `NestObservation.chicks_visible` (Tristate), `chick_count_estimate` (int|None), `mother_feeding_chicks` (bool) — new fields returned by the analyzer
-- `NestState.lifecycle_stage` (str), `last_chick_count`, `hatch_detected_ts`, `fledge_detected_ts`, `last_feeding_event_ts` — new tracked columns
+- `NestState.lifecycle_stage` (str; Literal now includes `building_nest` and `egg_laying` alongside `incubation`/`feeding`/`fledging`/`empty`), `last_chick_count`, `hatch_detected_ts`, `fledge_detected_ts`, `last_feeding_event_ts`, `egg_laying_started_ts`, `incubation_started_ts` — new tracked columns
 - Idempotent SQLite `ALTER TABLE` migration runs on every startup
 
 **Analyzer prompt extension:** new sections "CHICKS vs EGGS" and "Feeding behavior" teach Sonnet to distinguish chicks from eggs, recognize food in the beak, and use `chicks_visible="uncertain"` when mom is covering the cup.
@@ -628,6 +668,7 @@ If any image fails, the feature does not ship. The prompt needs tuning first. Th
 - Merge the lifecycle transition logic into events.py (keep it in state.py::record() — that's where observation-driven state lives)
 - Remove the 24h cooldown on hatch/fledge rules (prevents re-firing if state hiccups; load-bearing)
 - Loosen the feeding-event suppression to "always suppress during feeding stage" (would miss genuine emergencies; keep the 30-min bounded window)
+- Collapse the 6 stages back to 4 "for simplicity." The `egg_laying` stage exists specifically to suppress the multi-hour overnight absence storm that convinced the user the eggs had been abandoned during the first week of monitoring. Removing it re-creates that panic mode.
 
 ---
 

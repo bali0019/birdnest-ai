@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS state (
   hatch_detected_ts REAL,
   fledge_detected_ts REAL,
   last_feeding_event_ts REAL,
-  first_chick_sighting_ts REAL
+  first_chick_sighting_ts REAL,
+  egg_laying_started_ts REAL,
+  incubation_started_ts REAL
 );
 INSERT OR IGNORE INTO state (id) VALUES (1);
 
@@ -127,6 +129,12 @@ class StateStore:
             "ALTER TABLE state ADD COLUMN last_feeding_event_ts REAL",
             # 2-sighting hatch confirmation (2026-04-16, Step 9)
             "ALTER TABLE state ADD COLUMN first_chick_sighting_ts REAL",
+            # 6-stage lifecycle expansion (2026-04-16): add building_nest and
+            # egg_laying stages with their own started_ts timestamps. Backfill
+            # tool (tools/lifecycle_backfill.py) populates these for the
+            # existing production DB from observation history.
+            "ALTER TABLE state ADD COLUMN egg_laying_started_ts REAL",
+            "ALTER TABLE state ADD COLUMN incubation_started_ts REAL",
         ]
         for sql in _migrations:
             try:
@@ -159,6 +167,8 @@ class StateStore:
         fledge_detected_ts = _opt("fledge_detected_ts")
         last_feeding_event_ts = _opt("last_feeding_event_ts")
         first_chick_sighting_ts = _opt("first_chick_sighting_ts")
+        egg_laying_started_ts = _opt("egg_laying_started_ts")
+        incubation_started_ts = _opt("incubation_started_ts")
         return NestState(
             last_mother_seen_ts=row["last_mother_seen_ts"],
             last_known_egg_count=row["last_known_egg_count"],
@@ -173,6 +183,8 @@ class StateStore:
             fledge_detected_ts=fledge_detected_ts,
             last_feeding_event_ts=last_feeding_event_ts,
             first_chick_sighting_ts=first_chick_sighting_ts,
+            egg_laying_started_ts=egg_laying_started_ts,
+            incubation_started_ts=incubation_started_ts,
             absence_started_ts=absence_started_ts,
         )
 
@@ -210,6 +222,8 @@ class StateStore:
         fledge_detected_ts = _opt("fledge_detected_ts")
         last_feeding_event_ts = _opt("last_feeding_event_ts")
         first_chick_sighting_ts = _opt("first_chick_sighting_ts")
+        egg_laying_started_ts = _opt("egg_laying_started_ts")
+        incubation_started_ts = _opt("incubation_started_ts")
 
         if observation is not None and observation.confidence >= _MIN_CONFIDENCE:
             # During quiet hours, require higher confidence to flip in_absence.
@@ -268,6 +282,78 @@ class StateStore:
             # MEDIUM long-absence alerts for a cooldown window.
             if observation.mother_feeding_chicks:
                 last_feeding_event_ts = ts
+
+            # Transition: building_nest → egg_laying
+            # Trigger: first confident cardinal_on_nest=true observation.
+            # During egg laying, the female sits briefly (1/day for 3-4 days)
+            # to lay. The first sustained sitting is our signal that laying
+            # has begun. We only ever see this transition for future broods;
+            # the current monitored brood was already past building_nest when
+            # monitoring started (backfill tool sets egg_laying_started_ts).
+            if (
+                lifecycle_stage == "building_nest"
+                and observation.cardinal_on_nest == "true"
+            ):
+                lifecycle_stage = "egg_laying"
+                if egg_laying_started_ts is None:
+                    egg_laying_started_ts = ts
+                log.info(
+                    "lifecycle: transitioning building_nest → egg_laying at ts=%.0f",
+                    ts,
+                )
+
+            # Transition: egg_laying → incubation
+            # Trigger: ≥70% cardinal_on_nest=true ratio over a 24h rolling
+            # window of confident observations. During egg laying, the female
+            # visits briefly to lay one egg per day; sustained sitting means
+            # the final egg is down and full incubation has begun (~12 days
+            # to hatch). The 70% threshold is deliberately lenient vs real
+            # incubation (~95% on-nest when mom is awake) because it
+            # INCLUDES quiet-hours gaps, her natural ~5% foraging time, and
+            # analyzer IR misreads. See CLAUDE.md §23 for rationale.
+            # Only runs when we have enough history — silent no-op otherwise.
+            if (
+                lifecycle_stage == "egg_laying"
+                and egg_laying_started_ts is not None
+                and (ts - egg_laying_started_ts) >= 24 * 3600
+            ):
+                cur = self._conn.execute(
+                    "SELECT observation_json FROM observations "
+                    "WHERE ts >= ? AND ts <= ? AND observation_json IS NOT NULL",
+                    (ts - 24 * 3600, ts),
+                )
+                confident_total = 0
+                confident_on_nest = 0
+                for r in cur.fetchall():
+                    oj = r["observation_json"]
+                    if not oj:
+                        continue
+                    # Cheap string match — avoids json.loads on every snap.
+                    if '"confidence":' not in oj:
+                        continue
+                    # Only count observations that were confident enough to
+                    # trust ("confidence": 0.55+). Approximated by checking
+                    # the string for any confidence >= 0.55 — we match the
+                    # threshold used elsewhere in this file.
+                    if '"cardinal_on_nest":"true"' in oj:
+                        confident_on_nest += 1
+                        confident_total += 1
+                    elif '"cardinal_on_nest":"false"' in oj:
+                        confident_total += 1
+                    # "uncertain" doesn't count — neither in numerator nor
+                    # denominator — so partial-view/IR observations neither
+                    # block nor accelerate the transition.
+                if confident_total >= 24:  # at least ~1 confident obs/hour
+                    ratio = confident_on_nest / confident_total
+                    if ratio >= 0.70:
+                        lifecycle_stage = "incubation"
+                        if incubation_started_ts is None:
+                            incubation_started_ts = ts
+                        log.info(
+                            "lifecycle: transitioning egg_laying → incubation "
+                            "at ts=%.0f (%.0f%% sitting over 24h, n=%d)",
+                            ts, ratio * 100, confident_total,
+                        )
 
             # Transition: incubation → feeding (with 2-sighting confirmation)
             # Requires TWO confirming chick signals within a 4-hour window
@@ -369,7 +455,9 @@ class StateStore:
             " hatch_detected_ts = ?, "
             " fledge_detected_ts = ?, "
             " last_feeding_event_ts = ?, "
-            " first_chick_sighting_ts = ? "
+            " first_chick_sighting_ts = ?, "
+            " egg_laying_started_ts = ?, "
+            " incubation_started_ts = ? "
             "WHERE id = 1",
             (
                 last_mother_seen_ts,
@@ -384,6 +472,8 @@ class StateStore:
                 fledge_detected_ts,
                 last_feeding_event_ts,
                 first_chick_sighting_ts,
+                egg_laying_started_ts,
+                incubation_started_ts,
             ),
         )
         return self._row_to_state(self._load_row())

@@ -22,6 +22,10 @@ It took some reading to understand what was happening. Female cardinals lay one 
 
 The system did not know this. It fired absence alerts all night, every night, for the first four days. I had built a machine to protect eggs from a thrasher, and the first thing it did was convince me the mother had abandoned them.
 
+So I taught it what a cardinal's spring actually looks like. The nest moves through six stages, from `building_nest` to `egg_laying` to `incubation` to `feeding` to `fledging` to `empty`, and the system watches the observations pile up and figures out where she is in the arc. When twenty four hours of snaps show her sitting roughly seven times out of ten, it concludes incubation has begun. When a chick's open mouth appears above the rim of the cup, it moves to feeding. When she stops visiting for most of a day, it calls it a fledge. Each transition gets a quiet note in a dedicated Discord channel, a cardinal icon and a one line summary, no alarm. The `egg_laying` stage is the one that ended the overnight panic: while she is still laying, absence at night is expected, and the system holds its fire.
+
+The status badge at the top of this page updates as she moves through these stages.
+
 ## What the system sees
 
 The camera takes a fresh photo every one to five minutes. Each image goes to Claude Sonnet 4.6, Anthropic's vision model, which returns a structured observation: is the cardinal present, are the eggs visible, is anything threatening near the nest.

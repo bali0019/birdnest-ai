@@ -539,3 +539,230 @@ def test_predation_in_feeding_stage_fires_critical(store, lifecycle_on):
     assert decision is not None
     assert decision.severity == Severity.CRITICAL
     assert decision.rule_id == "direct_attack"
+
+
+# ── 6-stage expansion: building_nest + egg_laying (added 2026-04-16) ──
+
+def _seed_stage(store, stage, **extra_cols):
+    """Directly UPDATE the state row to seed a specific lifecycle_stage and
+    optional additional columns. Used for tests that need to start from a
+    stage other than the default ('incubation')."""
+    cols = {"lifecycle_stage": stage}
+    cols.update(extra_cols)
+    set_clause = ", ".join(f"{k} = ?" for k in cols)
+    store._conn.execute(
+        f"UPDATE state SET {set_clause} WHERE id = 1",
+        tuple(cols.values()),
+    )
+
+
+def test_building_nest_is_valid_default(store, lifecycle_on):
+    """A NestState can be constructed with lifecycle_stage='building_nest'
+    and the associated timestamp fields default to None."""
+    from cardinal_nest_monitor.schema import NestState
+
+    ns = NestState(lifecycle_stage="building_nest")
+    assert ns.lifecycle_stage == "building_nest"
+    assert ns.egg_laying_started_ts is None
+    assert ns.incubation_started_ts is None
+    assert ns.hatch_detected_ts is None
+    assert ns.fledge_detected_ts is None
+
+
+def test_building_nest_to_egg_laying_on_first_sitting(store, lifecycle_on):
+    """Seed store at building_nest, record a cardinal_on_nest=true observation,
+    verify stage flips to egg_laying and egg_laying_started_ts is set to ts."""
+    _seed_stage(store, "building_nest")
+    # Sanity check — we actually loaded building_nest.
+    assert store.get_state().lifecycle_stage == "building_nest"
+
+    t0 = time.time()
+    obs = _obs(cardinal_on_nest="true", confidence=0.9)
+    state = store.record(t0, False, None, obs, None)
+    assert state.lifecycle_stage == "egg_laying"
+    assert state.egg_laying_started_ts == pytest.approx(t0, abs=1.0)
+
+
+def test_building_nest_to_egg_laying_fires_alert(store, lifecycle_on):
+    """events.evaluate() with pre-state=building_nest + cardinal_on_nest=true
+    should return a LOW AlertDecision with rule_id='egg_laying_begin'."""
+    _seed_stage(store, "building_nest")
+    pre_state = store.get_state()
+    assert pre_state.lifecycle_stage == "building_nest"
+
+    t0 = time.time()
+    obs = _obs(cardinal_on_nest="true", confidence=0.9)
+    decision = evaluate(obs, pre_state, store, t0)
+    assert decision is not None
+    assert decision.severity == Severity.LOW
+    assert decision.rule_id == "egg_laying_begin"
+
+
+def _seed_observations(store, base_ts, n, on_nest_ratio, confidence=0.9):
+    """INSERT `n` synthetic observations into the observations table spread
+    evenly over the 24h window ending at base_ts, with `on_nest_ratio`
+    fraction having cardinal_on_nest='true' (rest have 'false')."""
+    n_on = int(round(n * on_nest_ratio))
+    interval = (24 * 3600) / n  # seconds between synthetic obs
+    for i in range(n):
+        ts = base_ts - (24 * 3600) + (i + 1) * interval * 0.9  # keep all within 24h
+        on_nest = "true" if i < n_on else "false"
+        # Match the string format produced by NestObservation.model_dump_json().
+        # state.py::record() uses cheap string matching on this JSON, so we
+        # only need the fields it checks for: cardinal_on_nest and confidence.
+        obs_json = (
+            '{"mother_cardinal_present":"true",'
+            f'"cardinal_on_nest":"{on_nest}",'
+            '"eggs_visible":"false","egg_count_estimate":null,'
+            '"nest_visible":true,"nest_disturbed":"false",'
+            '"species_detected":[],"threat_species_detected":[],'
+            '"near_nest_activity":false,"direct_nest_interaction":false,'
+            '"chicks_visible":"uncertain","chick_count_estimate":null,'
+            '"mother_feeding_chicks":false,'
+            f'"confidence":{confidence},"summary":"seed"}}'
+        )
+        store._conn.execute(
+            "INSERT INTO observations (ts, motion_triggered, prefilter_json, "
+            "observation_json, evidence_dir) VALUES (?, 0, NULL, ?, NULL)",
+            (ts, obs_json),
+        )
+
+
+def test_egg_laying_to_incubation_auto_detection(store, lifecycle_on):
+    """24h of observations with 75% cardinal_on_nest=true + egg_laying_started_ts
+    24h ago → record() transitions egg_laying → incubation."""
+    t0 = time.time()
+    _seed_stage(
+        store,
+        "egg_laying",
+        egg_laying_started_ts=t0 - 24 * 3600 - 60,  # slightly > 24h ago
+    )
+    _seed_observations(store, t0, n=30, on_nest_ratio=0.75)
+
+    # Final observation that triggers the check.
+    obs = _obs(cardinal_on_nest="true", confidence=0.9)
+    state = store.record(t0, False, None, obs, None)
+    assert state.lifecycle_stage == "incubation"
+    assert state.incubation_started_ts == pytest.approx(t0, abs=1.0)
+
+
+def test_egg_laying_stays_put_when_below_70pct(store, lifecycle_on):
+    """50% cardinal_on_nest ratio does NOT trigger the transition."""
+    t0 = time.time()
+    _seed_stage(
+        store,
+        "egg_laying",
+        egg_laying_started_ts=t0 - 24 * 3600 - 60,
+    )
+    _seed_observations(store, t0, n=30, on_nest_ratio=0.50)
+
+    obs = _obs(cardinal_on_nest="true", confidence=0.9)
+    state = store.record(t0, False, None, obs, None)
+    assert state.lifecycle_stage == "egg_laying"
+    assert state.incubation_started_ts is None
+
+
+def test_egg_laying_to_incubation_requires_24h_of_observations(store, lifecycle_on):
+    """egg_laying_started_ts only 12h ago → transition gated regardless of ratio."""
+    t0 = time.time()
+    _seed_stage(
+        store,
+        "egg_laying",
+        egg_laying_started_ts=t0 - 12 * 3600,  # only 12h ago
+    )
+    # Seed plenty of 'true' observations in the last 12h — ratio is fine.
+    _seed_observations(store, t0, n=30, on_nest_ratio=0.90)
+
+    obs = _obs(cardinal_on_nest="true", confidence=0.9)
+    state = store.record(t0, False, None, obs, None)
+    assert state.lifecycle_stage == "egg_laying"
+    assert state.incubation_started_ts is None
+
+
+def test_egg_laying_to_incubation_fires_alert(store, lifecycle_on):
+    """events.evaluate() with pre_state=egg_laying + 24h history of 75%
+    sitting returns a LOW AlertDecision with rule_id='incubation_begin'."""
+    t0 = time.time()
+    _seed_stage(
+        store,
+        "egg_laying",
+        egg_laying_started_ts=t0 - 24 * 3600 - 60,
+    )
+    _seed_observations(store, t0, n=30, on_nest_ratio=0.75)
+
+    pre_state = store.get_state()
+    assert pre_state.lifecycle_stage == "egg_laying"
+
+    obs = _obs(cardinal_on_nest="true", confidence=0.9)
+    decision = evaluate(obs, pre_state, store, t0)
+    assert decision is not None
+    assert decision.severity == Severity.LOW
+    assert decision.rule_id == "incubation_begin"
+
+
+def test_incubation_begin_cooldown_prevents_double_alert(store, lifecycle_on):
+    """After firing incubation_begin and committing the transition to state,
+    evaluate() must not fire a second incubation_begin alert. The natural
+    guard is that lifecycle_stage has flipped to 'incubation', so the
+    egg_laying-gated alert predicate no longer matches. This mirrors the
+    real Pipeline.on_image ordering (evaluate → record → next-snap's evaluate)."""
+    t0 = time.time()
+    _seed_stage(
+        store,
+        "egg_laying",
+        egg_laying_started_ts=t0 - 24 * 3600 - 60,
+    )
+    _seed_observations(store, t0, n=30, on_nest_ratio=0.75)
+
+    pre_state = store.get_state()
+    obs = _obs(cardinal_on_nest="true", confidence=0.9)
+    first = evaluate(obs, pre_state, store, t0)
+    assert first is not None and first.rule_id == "incubation_begin"
+    # Commit the observation — this flips lifecycle_stage to incubation.
+    post_state = store.record(t0, False, None, obs, None)
+    assert post_state.lifecycle_stage == "incubation"
+    store.record_alert(first, t0, None)
+
+    # Next snap: evaluate() with the post-record state must not re-fire.
+    t1 = t0 + 60
+    next_pre_state = store.get_state()
+    second = evaluate(obs, next_pre_state, store, t1)
+    assert second is None or second.rule_id != "incubation_begin"
+
+
+def test_lifecycle_flag_off_skips_new_transitions(store, monkeypatch):
+    """With lifecycle_tracking_enabled=False, building_nest → egg_laying
+    transition does NOT happen — stage stays at building_nest."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "lifecycle_tracking_enabled", False)
+
+    _seed_stage(store, "building_nest")
+    t0 = time.time()
+    obs = _obs(cardinal_on_nest="true", confidence=0.9)
+    state = store.record(t0, False, None, obs, None)
+    assert state.lifecycle_stage == "building_nest"
+    assert state.egg_laying_started_ts is None
+
+
+def test_egg_laying_started_ts_persists_across_record_calls(store, lifecycle_on):
+    """Once egg_laying_started_ts is set by the building_nest → egg_laying
+    transition, subsequent record() calls must NOT overwrite it."""
+    _seed_stage(store, "building_nest")
+
+    t0 = time.time()
+    state = store.record(
+        t0, False, None, _obs(cardinal_on_nest="true", confidence=0.9), None,
+    )
+    assert state.lifecycle_stage == "egg_laying"
+    original_ts = state.egg_laying_started_ts
+    assert original_ts == pytest.approx(t0, abs=1.0)
+
+    # Several more record() calls — egg_laying_started_ts must not change.
+    for i in range(1, 4):
+        t_later = t0 + i * 300
+        state = store.record(
+            t_later, False, None,
+            _obs(cardinal_on_nest="true", confidence=0.9), None,
+        )
+        assert state.lifecycle_stage == "egg_laying"
+        assert state.egg_laying_started_ts == original_ts

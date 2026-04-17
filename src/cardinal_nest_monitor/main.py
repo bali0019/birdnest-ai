@@ -400,6 +400,33 @@ async def feed_worker(feed_notifier: Notifier, queue: asyncio.Queue) -> None:
             queue.task_done()
 
 
+def _lifecycle_day_label(state) -> str | None:
+    """Human-readable day counter for the heartbeat embed.
+
+    Examples:
+      incubation + incubation_started_ts=2d ago → "Day 2 of ~12"
+      egg_laying + egg_laying_started_ts=1d ago → "Day 1 of ~4"
+      feeding + hatch_detected_ts=3d ago        → "Day 3 of ~14"
+    None when we can't compute (no start timestamp, or stages without a
+    canonical countdown like building_nest / empty).
+    """
+    stage = state.lifecycle_stage
+    now = time.time()
+    if stage == "incubation" and state.incubation_started_ts is not None:
+        day = int((now - state.incubation_started_ts) / 86400) + 1
+        return f"Day {day} of ~12"
+    if stage == "egg_laying" and state.egg_laying_started_ts is not None:
+        day = int((now - state.egg_laying_started_ts) / 86400) + 1
+        return f"Day {day} of ~4"
+    if stage == "feeding" and state.hatch_detected_ts is not None:
+        day = int((now - state.hatch_detected_ts) / 86400) + 1
+        return f"Day {day} of ~14"
+    if stage == "fledging" and state.fledge_detected_ts is not None:
+        day = int((now - state.fledge_detected_ts) / 86400) + 1
+        return f"Day {day}"
+    return None
+
+
 async def heartbeat_scheduler(notifier: Notifier, store: StateStore, counters: DailyCounters) -> None:
     """Once per day at HEARTBEAT_HOUR_LOCAL, post a summary embed."""
     settings = get_settings()
@@ -421,12 +448,16 @@ async def heartbeat_scheduler(notifier: Notifier, store: StateStore, counters: D
                 mother_minutes_ago = int(
                     (time.time() - state.last_mother_seen_ts) / 60
                 )
+            lifecycle_stage = state.lifecycle_stage if get_settings().lifecycle_tracking_enabled else None
+            lifecycle_day_label = _lifecycle_day_label(state) if lifecycle_stage else None
             await notifier.send_heartbeat(
                 events_today=counters.events,
                 alerts_today=counters.alerts,
                 last_mother_seen_minutes_ago=mother_minutes_ago,
                 analyzer_success_rate=counters.analyzer_success_rate,
                 cost_estimate_today_usd=counters.estimated_cost,
+                lifecycle_stage=lifecycle_stage,
+                lifecycle_day_label=lifecycle_day_label,
             )
         except Exception:
             log.exception("heartbeat send failed (non-fatal)")

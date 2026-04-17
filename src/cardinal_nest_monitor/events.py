@@ -117,6 +117,68 @@ def _lifecycle_event(
     if observation.confidence < _MIN_CONFIDENCE:
         return None
 
+    # Egg-laying begins: predict building_nest → egg_laying transition.
+    # Fires once when the female is first observed sitting on the nest.
+    # Deliberately gentle — a LOW celebration alert, not an alarm.
+    if (
+        state.lifecycle_stage == "building_nest"
+        and observation.cardinal_on_nest == "true"
+    ):
+        sev = Severity.LOW
+        if not _cooldown_blocks(store, sev, "egg_laying_begin", 24 * 3600, ts):
+            return AlertDecision(
+                severity=sev,
+                title="🥚 Egg laying has begun",
+                summary="Female cardinal first observed sitting on the nest. Laying typically takes 3-4 days (one egg/day) before full incubation starts.",
+                species=[],
+                mother_present=observation.mother_cardinal_present,
+                confidence=observation.confidence,
+                rule_id="egg_laying_begin",
+            )
+
+    # Incubation begins: predict egg_laying → incubation transition.
+    # Fires once when sustained sitting pattern is confirmed (≥70%
+    # on-nest ratio over a 24h window). Mirrors state.py::record() logic.
+    if (
+        state.lifecycle_stage == "egg_laying"
+        and state.egg_laying_started_ts is not None
+        and (ts - state.egg_laying_started_ts) >= 24 * 3600
+    ):
+        cur = store._conn.execute(
+            "SELECT observation_json FROM observations "
+            "WHERE ts >= ? AND ts <= ? AND observation_json IS NOT NULL",
+            (ts - 24 * 3600, ts),
+        )
+        confident_total = 0
+        confident_on_nest = 0
+        for r in cur.fetchall():
+            oj = r["observation_json"]
+            if not oj or '"confidence":' not in oj:
+                continue
+            if '"cardinal_on_nest":"true"' in oj:
+                confident_on_nest += 1
+                confident_total += 1
+            elif '"cardinal_on_nest":"false"' in oj:
+                confident_total += 1
+        if confident_total >= 24:
+            ratio = confident_on_nest / confident_total
+            if ratio >= 0.70:
+                sev = Severity.LOW
+                if not _cooldown_blocks(store, sev, "incubation_begin", 24 * 3600, ts):
+                    return AlertDecision(
+                        severity=sev,
+                        title="🪺 Incubation has begun",
+                        summary=(
+                            f"Sustained sitting confirmed ({ratio:.0%} on-nest "
+                            f"over 24h). Full incubation is underway — ~12 day "
+                            f"countdown to hatch begins now."
+                        ),
+                        species=[],
+                        mother_present=observation.mother_cardinal_present,
+                        confidence=observation.confidence,
+                        rule_id="incubation_begin",
+                    )
+
     # Hatch: predict incubation → feeding with 2-sighting confirmation.
     # Mirror the state.py::record() logic exactly:
     #   - Alert fires ONLY on the 2nd confirming chick signal within the

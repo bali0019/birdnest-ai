@@ -269,3 +269,119 @@ async def test_predation_during_feeding_stage_still_critical(
         f"expected one CRITICAL alert, got {len(captured)} total"
     )
     assert critical_alerts[0].rule_id == "direct_attack"
+
+
+# ── egg_laying → incubation via Pipeline (24h sitting ratio ≥70%) ─────
+
+async def test_egg_laying_to_incubation_cycle_via_pipeline(
+    monkeypatch, store, evidence, notifier, lifecycle_on, cardinal_jpeg_bytes,
+):
+    """Starting from lifecycle_stage='egg_laying' with 25h of backfilled
+    observations showing sustained sitting (80% on-nest ratio), the next
+    Pipeline.on_image call should fire an `incubation_begin` LOW alert via
+    the lifecycle webhook and transition state to 'incubation' with
+    incubation_started_ts set.
+    """
+    # Simulated "now" — use a fixed, recent timestamp so the observation
+    # backfill doesn't collide with real wall-clock data in tmp_path DBs.
+    now_ts = time.time()
+    egg_laying_start_ts = now_ts - 25 * 3600  # 25h ago
+
+    # Seed the state row directly: stage=egg_laying, with egg_laying_started_ts
+    # set to 25h ago so the (ts - egg_laying_started_ts) >= 24h gate in
+    # events.py::_lifecycle_event is satisfied.
+    store._conn.execute(
+        "UPDATE state SET "
+        " lifecycle_stage = 'egg_laying', "
+        " egg_laying_started_ts = ?, "
+        " last_mother_seen_ts = ? "
+        "WHERE id = 1",
+        (egg_laying_start_ts, now_ts - 60),
+    )
+
+    # Backfill 30 observations spanning the 25h window, 24 (80%) with
+    # cardinal_on_nest="true" at confidence 0.85 and 6 with "false".
+    # events.py::_lifecycle_event does cheap string matching on the JSON
+    # ('"cardinal_on_nest":"true"' / '"confidence":') so we reuse the
+    # analyzer's canonical serialization via NestObservation.model_dump_json().
+    on_nest_obs = _obs(
+        cardinal_on_nest="true",
+        mother_cardinal_present="true",
+        confidence=0.85,
+        summary="Female on nest.",
+    ).model_dump_json()
+    off_nest_obs = _obs(
+        cardinal_on_nest="false",
+        mother_cardinal_present="false",
+        confidence=0.85,
+        summary="Brief absence.",
+        species_detected=[],
+    ).model_dump_json()
+
+    # Evenly spread 30 snaps across 25h ending ~1 min before now_ts.
+    window_seconds = 25 * 3600
+    for i in range(30):
+        obs_ts = egg_laying_start_ts + (i * window_seconds / 30.0)
+        # First 24 snaps = on-nest, last 6 = off-nest (80% ratio).
+        body = on_nest_obs if i < 24 else off_nest_obs
+        store._conn.execute(
+            "INSERT INTO observations (ts, motion_triggered, prefilter_json, observation_json, evidence_dir) "
+            "VALUES (?, 0, NULL, ?, NULL)",
+            (obs_ts, body),
+        )
+
+    # Sanity check the seeded state
+    seeded = store.get_state()
+    assert seeded.lifecycle_stage == "egg_laying"
+    assert seeded.egg_laying_started_ts == pytest.approx(egg_laying_start_ts, abs=1.0)
+    assert seeded.incubation_started_ts is None
+
+    # Capture send_alert calls on the real notifier (which routes lifecycle
+    # rule_ids to discord_lifecycle_webhook_url — redirected to the test
+    # webhook by the autouse enable_test_mode fixture).
+    captured = []
+    orig = notifier.send_alert
+
+    async def _capture(decision, observation, **kwargs):
+        captured.append(decision)
+        return await orig(decision, observation, **kwargs)
+
+    monkeypatch.setattr(notifier, "send_alert", _capture)
+
+    # Mock the analyzer: the "now" snap shows the cardinal still sitting.
+    analyze_mock = AsyncMock(return_value=_obs(
+        cardinal_on_nest="true",
+        mother_cardinal_present="true",
+        confidence=0.9,
+        summary="Cardinal sustained on nest.",
+    ))
+    monkeypatch.setattr(analyzer_mod, "analyze", analyze_mock)
+
+    pipeline = _pipeline(store, notifier, evidence)
+    await pipeline.on_image(
+        cardinal_jpeg_bytes,
+        {"motion_triggered": False, "ts": now_ts},
+    )
+
+    # Assert the state transitioned to incubation with a timestamp.
+    final_state = store.get_state()
+    assert final_state.lifecycle_stage == "incubation", (
+        f"expected lifecycle_stage='incubation', got {final_state.lifecycle_stage!r}"
+    )
+    assert final_state.incubation_started_ts is not None, (
+        "expected incubation_started_ts to be set after the transition"
+    )
+    assert final_state.incubation_started_ts == pytest.approx(now_ts, abs=1.0)
+
+    # Assert an incubation_begin alert fired. Match EITHER by rule_id
+    # (preferred) OR by title substring (permissive fallback if rule_id
+    # wording drifts).
+    incubation_alerts = [
+        d for d in captured
+        if d.rule_id == "incubation_begin" or "Incubation" in d.title
+    ]
+    assert len(incubation_alerts) >= 1, (
+        f"expected ≥1 incubation_begin alert, got {len(captured)} total: "
+        f"{[(d.rule_id, d.title) for d in captured]}"
+    )
+    assert incubation_alerts[0].severity == Severity.LOW

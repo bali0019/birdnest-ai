@@ -109,7 +109,7 @@ class Notifier:
         # webhook isn't configured.
         target_url: str | None = None
         backfill_prefix: str = ""
-        if decision.rule_id in ("hatch", "fledge"):
+        if decision.rule_id in ("hatch", "fledge", "egg_laying_begin", "incubation_begin"):
             lifecycle_url = settings.discord_lifecycle_webhook_url
             if lifecycle_url:
                 target_url = lifecycle_url
@@ -296,6 +296,8 @@ class Notifier:
         last_mother_seen_minutes_ago: int | None,
         analyzer_success_rate: float,
         cost_estimate_today_usd: float | None,
+        lifecycle_stage: str | None = None,
+        lifecycle_day_label: str | None = None,
     ) -> bool:
         last_seen = (
             f"{last_mother_seen_minutes_ago}m ago"
@@ -319,6 +321,13 @@ class Notifier:
             {"name": "Est. spend today", "value": cost, "inline": True},
             {"name": "Camera", "value": self.camera_name or "—", "inline": True},
         ]
+        if lifecycle_stage:
+            stage_value = lifecycle_stage.replace("_", " ").title()
+            if lifecycle_day_label:
+                stage_value = f"{stage_value} · {lifecycle_day_label}"
+            fields.append(
+                {"name": "Lifecycle", "value": stage_value, "inline": False},
+            )
         embed = {
             "title": "📡 Cardinal Nest Monitor — heartbeat",
             "description": "Daily system-alive report.",
