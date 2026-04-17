@@ -576,19 +576,29 @@ class StateStore:
         window_s: int,
         ts: float | None = None,
     ) -> bool:
+        # Constrain to alerts at or before ref_ts (Codex P2 round 4): without
+        # this filter, a future alert (recorded at a later wall-clock time)
+        # would be returned for an older `ts` argument — and the Python
+        # `(ref - row_ts) < window_s` check would treat the negative
+        # difference as an active cooldown, silently suppressing legitimate
+        # historical alerts during backfill replay. We must look at history
+        # AS OF the snap's timestamp, not "the latest known".
+        ref = ts if ts is not None else time.time()
         if species is None:
             cur = self._conn.execute(
-                "SELECT MAX(ts) AS latest FROM alerts WHERE severity = ?",
-                (severity.value,),
+                "SELECT MAX(ts) AS latest FROM alerts "
+                "WHERE severity = ? AND ts <= ?",
+                (severity.value, ref),
             )
         else:
             cur = self._conn.execute(
                 "SELECT MAX(ts) AS latest FROM alerts "
-                "WHERE severity = ? AND ("
+                "WHERE severity = ? AND ts <= ? AND ("
                 " species = ? OR species LIKE ? OR species LIKE ? OR species LIKE ?"
                 ")",
                 (
                     severity.value,
+                    ref,
                     species,
                     f"{species},%",
                     f"%,{species}",
@@ -598,7 +608,6 @@ class StateStore:
         row = cur.fetchone()
         if row is None or row["latest"] is None:
             return False
-        ref = ts if ts is not None else time.time()
         return (ref - float(row["latest"])) < window_s
 
     def latest_alert_for_species(
@@ -609,17 +618,27 @@ class StateStore:
     ) -> tuple[Severity, float] | None:
         """Return (severity, ts) of the most recent alert for `species` within
         `window_s`, regardless of severity. Used for escalation breakthrough.
+
+        Constrains to alerts at or before `ts` (Codex P2 round 4) — without
+        this, future alerts could be returned for older `ts` arguments and
+        downstream code would treat them as prior history.
         """
+        ref = ts if ts is not None else time.time()
         if species is None:
             cur = self._conn.execute(
-                "SELECT severity, ts FROM alerts ORDER BY ts DESC LIMIT 1"
+                "SELECT severity, ts FROM alerts WHERE ts <= ? "
+                "ORDER BY ts DESC LIMIT 1",
+                (ref,),
             )
         else:
             cur = self._conn.execute(
                 "SELECT severity, ts FROM alerts "
-                "WHERE species = ? OR species LIKE ? OR species LIKE ? OR species LIKE ? "
+                "WHERE ts <= ? AND ("
+                " species = ? OR species LIKE ? OR species LIKE ? OR species LIKE ?"
+                ") "
                 "ORDER BY ts DESC LIMIT 1",
                 (
+                    ref,
                     species,
                     f"{species},%",
                     f"%,{species}",
@@ -629,7 +648,6 @@ class StateStore:
         row = cur.fetchone()
         if row is None:
             return None
-        ref = ts if ts is not None else time.time()
         if (ref - float(row["ts"])) >= window_s:
             return None
         return Severity(row["severity"]), float(row["ts"])

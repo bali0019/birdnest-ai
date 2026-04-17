@@ -155,3 +155,80 @@ def test_different_species_independent_cooldown(store):
     assert second is not None
     assert second.severity == Severity.CRITICAL
     assert "squirrel" in second.species
+
+
+# ── Codex P2 round 4: cooldown queries must respect ts <= ref_ts ──────
+
+def test_cooldown_active_ignores_future_alerts(store):
+    """Reproduces Codex's exact case: alert recorded at ts=2000, then
+    cooldown_active(... ts=1000) — must return False (the alert is in the
+    future relative to ref_ts and should not be considered prior history).
+
+    Without the fix, the SQL returned the future row and the Python
+    `(ref - row_ts) < window_s` check fired True for the negative
+    difference, silently suppressing legitimate older backfill alerts.
+    """
+    from cardinal_nest_monitor.schema import AlertDecision, Severity
+    decision = AlertDecision(
+        severity=Severity.CRITICAL,
+        title="Future alert",
+        summary="recorded at ts=2000",
+        species=["brown_thrasher"],
+        confidence=0.9,
+        rule_id="direct_attack",
+    )
+    store.record_alert(decision, ts=2000.0, evidence_dir=None)
+
+    # Now check cooldown for an OLDER reference ts.
+    assert store.cooldown_active(
+        Severity.CRITICAL, "brown_thrasher", window_s=300, ts=1000.0,
+    ) is False, (
+        "Future alert at ts=2000 must not be returned for cooldown query "
+        "at ts=1000 (Codex P2 round 4)."
+    )
+
+
+def test_latest_alert_for_species_ignores_future_alerts(store):
+    """Companion to the cooldown_active test — latest_alert_for_species()
+    must also constrain to ts <= ref_ts, otherwise the breakthrough
+    escalation logic could see a future higher-severity alert and refuse
+    to fire a legitimate older alert during backfill drain.
+    """
+    from cardinal_nest_monitor.schema import AlertDecision, Severity
+    decision = AlertDecision(
+        severity=Severity.CRITICAL,
+        title="Future alert",
+        summary="recorded at ts=2000",
+        species=["brown_thrasher"],
+        confidence=0.9,
+        rule_id="direct_attack",
+    )
+    store.record_alert(decision, ts=2000.0, evidence_dir=None)
+
+    result = store.latest_alert_for_species(
+        "brown_thrasher", window_s=10000, ts=1000.0,
+    )
+    assert result is None, (
+        "Future alert at ts=2000 must not be returned for latest-alert "
+        "query at ts=1000 (Codex P2 round 4)."
+    )
+
+
+def test_cooldown_still_works_for_historical_alerts(store):
+    """Negative control: cooldown_active() must still return True when a
+    LEGITIMATE prior alert (ts <= ref_ts) is within the window."""
+    from cardinal_nest_monitor.schema import AlertDecision, Severity
+    decision = AlertDecision(
+        severity=Severity.CRITICAL,
+        title="Real prior alert",
+        summary="recorded at ts=900",
+        species=["brown_thrasher"],
+        confidence=0.9,
+        rule_id="direct_attack",
+    )
+    store.record_alert(decision, ts=900.0, evidence_dir=None)
+
+    # Reference ts after the alert — within 300s cooldown window.
+    assert store.cooldown_active(
+        Severity.CRITICAL, "brown_thrasher", window_s=300, ts=1000.0,
+    ) is True

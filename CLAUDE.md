@@ -908,6 +908,21 @@ These remain operationally valuable through the existing `[BACKFILL +Nm]` channe
 
 If you ever extend the IR-phrase allowlist in `events.py::_IR_MODE_PHRASES`, you don't need to touch analytics — both live and analytics paths share `summary_indicates_ir_mode()`. **Don't fork these matchers.** Live and analytics disagreeing about IR detection would produce silent inconsistencies between Discord alerts and Discord reports.
 
+**Round-4 follow-up (cooldown + verifier, 2026-04-17):** Codex reproduced two more backfill-only correctness gaps that survived rounds 1–3.
+
+- *Future-blind cooldowns.* `state.py::cooldown_active` and `latest_alert_for_species` queried `MAX(ts) FROM alerts WHERE ...` then compared to the caller's `ts` in Python. They DIDN'T constrain `WHERE ts <= ref_ts`. So during newest-first backlog drain, a newer alert (recorded at 12:10) was returned when evaluating an older 12:00 snap, and the Python `(ref - row_ts) < window_s` check fired True for the negative difference — silently suppressing legitimate older historical alerts of the same species. Codex's exact repro: alert at `ts=2000`, `cooldown_active(... ts=1000)` returned True. Fix: both queries now include `AND ts <= ?` in the SQL. Also makes the eval timeline deterministic — cooldowns now answer the question "was there a prior alert in the window AS OF this snap's timestamp" rather than "as of the latest known".
+
+- *Verifier dropped is_backfill.* `Pipeline.on_image` correctly passes `is_backfill=True` to `evaluate()` for stale snaps (round 2), but the verifier's internal `evaluate(opus_obs, pre_state, store, ts)` call dropped that context. Opus's verdict ran with full live-mode rules. Result: a stale snap that fires CRITICAL `direct_attack` from Sonnet could be downgraded or suppressed by a bogus Opus `mother_returned` / `long_absence` decision against future state. Fix: `verify_alert()` now takes `is_backfill: bool = False` and forwards it to its internal `evaluate()`. `Pipeline.on_image` passes the same flag it computed for the Sonnet pass.
+
+5 new regression tests:
+- `tests/test_cooldown.py::test_cooldown_active_ignores_future_alerts` (Codex's exact repro)
+- `tests/test_cooldown.py::test_latest_alert_for_species_ignores_future_alerts`
+- `tests/test_cooldown.py::test_cooldown_still_works_for_historical_alerts` (negative control)
+- `tests/test_verifier.py::test_verify_alert_forwards_is_backfill_to_evaluate`
+- `tests/test_verifier.py::test_verify_alert_default_is_backfill_false`
+
+**Don't regress.** The pipeline's `is_backfill` flag MUST flow into both `evaluate()` AND `verify_alert()` for every stale snap; cooldown queries MUST include `WHERE ts <= ref_ts`. These three checks are coupled — a stale snap should see the same set of "as-of" history in evaluate, in verify, and in cooldown lookups, or backfill behavior diverges silently across paths. If you find yourself adding a new alert-history query, it MUST take a `ts` parameter and constrain SQL to `ts <= that`.
+
 ---
 
 ### 27. Cost estimate now accounts for multi-image + verifier (2026-04-17)
@@ -972,7 +987,7 @@ Knobs in order of smallest impact first:
 
 ## Verifying before claiming "it works"
 
-1. `TEST_MODE=true python -m pytest tests/ -v` → all 148 tests pass (117 unit + 31 integration). Includes the lifecycle 6-stage tests, IR-mode suppression tests, the codex round-1 regression guards (stale-snap, nest_visible, confidence filter, downloader cadence), the codex round-2 backfill-eval guards (mother_returned negative-absence, long_absence on stale, threat alerts still fire on stale), and the codex round-3 analytics IR-coercion guards (no phantom dusk trips, no inflated off-nest seconds).
+1. `TEST_MODE=true python -m pytest tests/ -v` → all 153 tests pass (122 unit + 31 integration). Includes the lifecycle 6-stage tests, IR-mode suppression tests, the codex round-1 regression guards (stale-snap, nest_visible, confidence filter, downloader cadence), the round-2 backfill-eval guards, the round-3 analytics IR-coercion guards, and the round-4 cooldown-future-blindness + verifier-is_backfill guards.
 2. `launchctl list | grep cardinalnest` → both `com.cardinalnest.downloader` and `com.cardinalnest.analyzer` show PIDs + exit code 0.
 3. `tail ~/Library/Logs/cardinal-nest-monitor/downloader.out.log` → `Blink connected; N cameras`, `downloader watchdog started`.
 4. `tail ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log` → `spool consumer started`, `feed_worker started`, `analytics_scheduler started`, `watchdog started`.

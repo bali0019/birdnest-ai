@@ -85,6 +85,7 @@ async def verify_alert(
     store: Any,  # StateStore; typed loosely to avoid circular import
     ts: float,
     verification_model: str,
+    is_backfill: bool = False,
 ) -> tuple[AlertDecision | None, NestObservation | None]:
     """Re-analyze the image with Opus and apply the disagreement rule.
 
@@ -97,6 +98,13 @@ async def verify_alert(
     This coroutine catches all exceptions from the Opus call internally; a
     verification infrastructure failure must NOT silently suppress a real
     Sonnet alert — we fall through with the original decision.
+
+    is_backfill (Codex P2 round 4): forwarded to the internal evaluate()
+    call so Opus's verdict uses the SAME backfill mode as Sonnet's. Without
+    this, an older HIGH/CRITICAL backfill snap could be downgraded or
+    suppressed by a bogus Opus state-relative result (mother_returned /
+    long_absence) computed against future state — a real correctness
+    gap specifically when verify_alerts_with_opus=True.
     """
     try:
         opus_obs = await analyzer_mod.analyze(
@@ -125,7 +133,10 @@ async def verify_alert(
     # Evaluate against the SAME pre-record state that Sonnet's decision used.
     # This keeps the verification apples-to-apples — Opus is re-running the
     # rules engine on its own observation, not a different state snapshot.
-    opus_decision = evaluate(opus_obs, pre_state, store, ts)
+    # is_backfill must be forwarded so Opus and Sonnet make the same set of
+    # rules eligible. Mismatched flags would let Opus emit a state-relative
+    # result on a stale snap and incorrectly downgrade Sonnet's threat alert.
+    opus_decision = evaluate(opus_obs, pre_state, store, ts, is_backfill=is_backfill)
     final = compute_verification_decision(sonnet_decision, opus_decision)
 
     if final is None:

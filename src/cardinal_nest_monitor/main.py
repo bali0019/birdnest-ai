@@ -198,6 +198,7 @@ class Pipeline:
                     verifier_mod.verify_alert(
                         jpeg, obs, decision, pre_state, self.store, ts,
                         verification_model=get_settings().verification_model,
+                        is_backfill=is_backfill,
                     ),
                     timeout=90,
                 )

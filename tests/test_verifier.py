@@ -93,3 +93,97 @@ def test_opus_downgrades_high_to_low():
     opus = _decision(Severity.LOW, "mother_returned")
     result = compute_verification_decision(sonnet, opus)
     assert result is opus
+
+
+# ── Codex P2 round 4: verifier must forward is_backfill ──────────────
+
+def test_verify_alert_forwards_is_backfill_to_evaluate():
+    """The verifier path was dropping is_backfill, letting Opus emit
+    state-relative decisions on stale snaps that could downgrade or
+    suppress legitimate threat alerts. Verify the parameter is forwarded
+    by stubbing both analyzer.analyze() and events.evaluate() and
+    inspecting the call.
+    """
+    import asyncio
+    from unittest.mock import patch, AsyncMock, MagicMock
+    from cardinal_nest_monitor.schema import NestObservation, NestState
+    from cardinal_nest_monitor import verifier as verifier_mod
+
+    sonnet_obs = NestObservation(
+        mother_cardinal_present="false", cardinal_on_nest="false",
+        eggs_visible="false", egg_count_estimate=None,
+        nest_visible=True, nest_disturbed="false",
+        species_detected=["brown_thrasher"],
+        threat_species_detected=["brown_thrasher"],
+        near_nest_activity=True, direct_nest_interaction=True,
+        confidence=0.9, summary="Thrasher in cup.",
+    )
+    sonnet_decision = _decision(Severity.CRITICAL, "direct_attack")
+    pre_state = NestState()
+    fake_store = MagicMock()
+
+    captured: dict[str, object] = {}
+
+    def _fake_evaluate(obs, state, store, ts, is_backfill=False):
+        captured["is_backfill"] = is_backfill
+        return _decision(Severity.CRITICAL, "direct_attack")
+
+    async def _run():
+        with patch.object(verifier_mod, "analyzer_mod") as mock_analyzer, \
+             patch.object(verifier_mod, "evaluate", side_effect=_fake_evaluate):
+            mock_analyzer.analyze = AsyncMock(return_value=sonnet_obs)
+            await verifier_mod.verify_alert(
+                jpeg=b"x", sonnet_obs=sonnet_obs,
+                sonnet_decision=sonnet_decision,
+                pre_state=pre_state, store=fake_store, ts=1234.0,
+                verification_model="claude-opus-4-7",
+                is_backfill=True,
+            )
+
+    asyncio.run(_run())
+    assert captured["is_backfill"] is True, (
+        "verifier.verify_alert() must forward is_backfill into its "
+        "internal evaluate() call (Codex P2 round 4)."
+    )
+
+
+def test_verify_alert_default_is_backfill_false():
+    """Default is_backfill should remain False so existing live-alert
+    callers (most calls) get the existing behavior."""
+    import asyncio
+    from unittest.mock import patch, AsyncMock, MagicMock
+    from cardinal_nest_monitor.schema import NestObservation, NestState
+    from cardinal_nest_monitor import verifier as verifier_mod
+
+    sonnet_obs = NestObservation(
+        mother_cardinal_present="false", cardinal_on_nest="false",
+        eggs_visible="false", egg_count_estimate=None,
+        nest_visible=True, nest_disturbed="false",
+        species_detected=["brown_thrasher"],
+        threat_species_detected=["brown_thrasher"],
+        near_nest_activity=True, direct_nest_interaction=True,
+        confidence=0.9, summary="Thrasher in cup.",
+    )
+    sonnet_decision = _decision(Severity.CRITICAL, "direct_attack")
+    pre_state = NestState()
+    fake_store = MagicMock()
+
+    captured: dict[str, object] = {}
+
+    def _fake_evaluate(obs, state, store, ts, is_backfill=False):
+        captured["is_backfill"] = is_backfill
+        return _decision(Severity.CRITICAL, "direct_attack")
+
+    async def _run():
+        with patch.object(verifier_mod, "analyzer_mod") as mock_analyzer, \
+             patch.object(verifier_mod, "evaluate", side_effect=_fake_evaluate):
+            mock_analyzer.analyze = AsyncMock(return_value=sonnet_obs)
+            await verifier_mod.verify_alert(
+                jpeg=b"x", sonnet_obs=sonnet_obs,
+                sonnet_decision=sonnet_decision,
+                pre_state=pre_state, store=fake_store, ts=1234.0,
+                verification_model="claude-opus-4-7",
+            )  # no is_backfill arg → default
+
+    asyncio.run(_run())
+    assert captured["is_backfill"] is False
