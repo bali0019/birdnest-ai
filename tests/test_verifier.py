@@ -391,3 +391,57 @@ def test_cardinal_override_suppresses_critical_too():
     assert final is None, (
         "Override must also suppress CRITICAL when Opus says cardinal+no threat."
     )
+
+
+# ── finalize_verification pure helper direct tests ───────────────
+
+def test_finalize_verification_suppresses_cardinal_positive_no_threat():
+    """Direct test: Opus identifies cardinal + no threat → suppress."""
+    from unittest.mock import MagicMock
+    from cardinal_nest_monitor.schema import NestObservation, NestState
+    from cardinal_nest_monitor.verifier import finalize_verification
+
+    opus_obs = NestObservation(
+        mother_cardinal_present="true", cardinal_on_nest="false",
+        eggs_visible="false", egg_count_estimate=None,
+        nest_visible=True, nest_disturbed="false",
+        species_detected=["female northern cardinal"],
+        threat_species_detected=[],
+        near_nest_activity=False, direct_nest_interaction=True,
+        confidence=0.88, summary="cardinal tending nest",
+    )
+    sonnet_decision = _decision(Severity.HIGH, "predator_absent")
+    final = finalize_verification(
+        sonnet_decision, opus_obs, NestState(), MagicMock(), 1234.0,
+    )
+    assert final is None
+
+
+def test_finalize_verification_forwards_is_backfill():
+    """Direct test: is_backfill gets forwarded to evaluate()."""
+    from unittest.mock import patch, MagicMock
+    from cardinal_nest_monitor.schema import NestObservation, NestState
+    from cardinal_nest_monitor import verifier as verifier_mod
+
+    opus_obs = NestObservation(
+        mother_cardinal_present="false", cardinal_on_nest="false",
+        eggs_visible="false", egg_count_estimate=None,
+        nest_visible=True, nest_disturbed="false",
+        species_detected=["brown thrasher"],
+        threat_species_detected=["brown_thrasher"],
+        near_nest_activity=True, direct_nest_interaction=False,
+        confidence=0.9, summary="thrasher at nest",
+    )
+    sonnet_decision = _decision(Severity.HIGH, "predator_absent")
+    captured = {}
+
+    def _fake_evaluate(obs, state, store, ts, is_backfill=False):
+        captured["is_backfill"] = is_backfill
+        return _decision(Severity.HIGH, "predator_absent")
+
+    with patch.object(verifier_mod, "evaluate", side_effect=_fake_evaluate):
+        verifier_mod.finalize_verification(
+            sonnet_decision, opus_obs, NestState(), MagicMock(), 1234.0,
+            is_backfill=True,
+        )
+    assert captured["is_backfill"] is True

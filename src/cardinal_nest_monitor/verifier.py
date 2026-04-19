@@ -103,6 +103,37 @@ def should_verify(decision: AlertDecision) -> bool:
     return decision.severity in _VERIFIED_SEVERITIES
 
 
+def finalize_verification(
+    sonnet_decision: AlertDecision,
+    opus_obs: NestObservation,
+    pre_state: NestState,
+    store: Any,  # StateStore; typed loosely to avoid circular import
+    ts: float,
+    *,
+    is_backfill: bool = False,
+) -> AlertDecision | None:
+    """Pure decision-logic for verification (no network call).
+
+    1. Content-aware override: if Opus identified the cardinal and named
+       no threats, suppress regardless of Opus's severity rank. Closes
+       the failure mode where Opus sets direct_nest_interaction=true on
+       a cardinal-positive observation (schema violation) and produces a
+       CRITICAL-rank rule output that would otherwise confirm Sonnet's
+       HIGH through pure severity comparison.
+
+    2. Otherwise re-run evaluate() on Opus's observation against the
+       SAME pre-record state Sonnet used, then apply the disagreement
+       rule (see compute_verification_decision).
+
+    Extracted from verify_alert() so the chronological replay test can
+    exercise the exact decision path without building a second copy.
+    """
+    if is_cardinal_positive_no_threat(opus_obs):
+        return None
+    opus_decision = evaluate(opus_obs, pre_state, store, ts, is_backfill=is_backfill)
+    return compute_verification_decision(sonnet_decision, opus_decision)
+
+
 async def verify_alert(
     jpeg: bytes,
     sonnet_obs: NestObservation,
@@ -156,31 +187,10 @@ async def verify_alert(
         )
         return (sonnet_decision, None)
 
-    # Content-aware override (2026-04-17): if Opus positively identified the
-    # cardinal and named no threats, suppress the alert regardless of whether
-    # Opus's rule-engine output would have confirmed Sonnet. This closes the
-    # failure mode where Opus sets direct_nest_interaction=true on the cardinal
-    # (schema violation) and thereby produces a CRITICAL-rank rule output that
-    # would otherwise "confirm" Sonnet's HIGH by pure severity comparison.
-    if is_cardinal_positive_no_threat(opus_obs):
-        log.info(
-            "Opus verification: cardinal-positive no-threat override → "
-            "SUPPRESSED (sonnet wanted %s %s). Opus species=%r, summary=%r",
-            sonnet_decision.severity.value,
-            sonnet_decision.rule_id,
-            opus_obs.species_detected,
-            opus_obs.summary[:120],
-        )
-        return (None, opus_obs)
-
-    # Evaluate against the SAME pre-record state that Sonnet's decision used.
-    # This keeps the verification apples-to-apples — Opus is re-running the
-    # rules engine on its own observation, not a different state snapshot.
-    # is_backfill must be forwarded so Opus and Sonnet make the same set of
-    # rules eligible. Mismatched flags would let Opus emit a state-relative
-    # result on a stale snap and incorrectly downgrade Sonnet's threat alert.
-    opus_decision = evaluate(opus_obs, pre_state, store, ts, is_backfill=is_backfill)
-    final = compute_verification_decision(sonnet_decision, opus_decision)
+    final = finalize_verification(
+        sonnet_decision, opus_obs, pre_state, store, ts,
+        is_backfill=is_backfill,
+    )
 
     if final is None:
         log.info(

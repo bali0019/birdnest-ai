@@ -30,11 +30,7 @@ import pytest
 from cardinal_nest_monitor.events import evaluate
 from cardinal_nest_monitor.schema import AlertDecision, NestObservation, Severity
 from cardinal_nest_monitor.state import StateStore
-from cardinal_nest_monitor.verifier import (
-    compute_verification_decision,
-    is_cardinal_positive_no_threat,
-    should_verify,
-)
+from cardinal_nest_monitor.verifier import finalize_verification, should_verify
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -75,55 +71,54 @@ def _simulate_verifier(
     store,
     ts: float,
 ) -> AlertDecision | None:
-    """Simulate the verifier path on CRITICAL/HIGH alerts using the stored
-    Opus verification.json when available. Mirrors verifier.verify_alert
-    without the network call — lets the chronological replay reproduce
-    production's downgrade/suppress behavior.
+    """Replay-side wrapper over the real `verifier.finalize_verification`.
 
-    Returns the final decision (None if suppressed, possibly downgraded).
-    If no verification.json is stored OR the alert isn't CRITICAL/HIGH,
-    returns the Sonnet decision unchanged.
+    Uses the stored Opus verification.json when available so the
+    chronological replay reproduces production's downgrade/suppress
+    behavior. When no verification.json is stored (rare — only for
+    non-CRITICAL/HIGH alerts, which don't run the verifier in production
+    either), returns the Sonnet decision unchanged. Skipping the
+    hand-rolled decision logic means any future change to
+    `finalize_verification` is automatically reflected in the replay.
     """
     if not should_verify(sonnet_decision):
         return sonnet_decision
     if opus_obs is None:
-        # No stored Opus verification — fall back to Sonnet like the real
-        # verifier does on API failures. For replay faithfulness, we
-        # assume production either posted the Sonnet decision or had a
-        # verifier call we can't reconstruct.
         return sonnet_decision
-
-    # Content-aware override: cardinal-positive + no threat suppresses.
-    if is_cardinal_positive_no_threat(opus_obs):
-        return None
-
-    # Otherwise, run Opus's observation through evaluate() and apply
-    # the severity-rank disagreement rule.
-    opus_decision = evaluate(opus_obs, pre_state, store, ts)
-    return compute_verification_decision(sonnet_decision, opus_decision)
+    return finalize_verification(
+        sonnet_decision, opus_obs, pre_state, store, ts,
+    )
 
 
 def _replay(entries, tmp_path, monkeypatch) -> dict[str, object]:
-    """Execute chronological stateful replay. Returns a dict mapping
-    evidence-dir name → AlertDecision or None."""
+    """Execute chronological stateful replay. Returns a dict:
+      - "fired": {evidence_dir_name: AlertDecision | None}
+      - "last_mother_seen_ts_before_first_ambig": float | None
+      - "last_mother_seen_ts_final": float | None
+    The trace fields let the ambig-cluster assertion test consume the
+    same module-scoped replay instead of running the day over again.
+    """
     from cardinal_nest_monitor.config import get_settings
+    from cardinal_nest_monitor.predicates import is_ambiguous_occupied_cup
     # The production DB has lifecycle tracking on + egg-count alerts off;
     # replay those exact settings so cooldowns / ambig / egg_loss behave
     # like they will in production after deploy.
     settings = get_settings()
     monkeypatch.setattr(settings, "lifecycle_tracking_enabled", True)
     monkeypatch.setattr(settings, "enable_egg_count_alerts", False)
-    # Quiet hours default is 23:00-05:00; keep production default.
 
     store = StateStore(tmp_path / "replay.sqlite")
     fired: dict[str, object] = {}
+    last_seen_before_ambig: float | None = None
+    seen_ambig = False
     try:
         for ts, name, obs, opus_obs, meta in entries:
+            if is_ambiguous_occupied_cup(obs) and not seen_ambig:
+                last_seen_before_ambig = store.get_state().last_mother_seen_ts
+                seen_ambig = True
+
             pre_state = store.get_state()
             sonnet_decision = evaluate(obs, pre_state, store, ts)
-            # Simulate the verifier when Sonnet raises a CRITICAL/HIGH
-            # alert. Uses stored Opus verification.json when available so
-            # the replay matches production's downgrade/suppress behavior.
             final_decision: AlertDecision | None
             if sonnet_decision is None:
                 final_decision = None
@@ -141,7 +136,12 @@ def _replay(entries, tmp_path, monkeypatch) -> dict[str, object]:
             if final_decision is not None:
                 store.record_alert(final_decision, ts, None)
             fired[name] = final_decision
-        return fired
+        return {
+            "fired": fired,
+            "last_mother_seen_ts_before_first_ambig": last_seen_before_ambig,
+            "last_mother_seen_ts_final": store.get_state().last_mother_seen_ts,
+            "saw_ambig": seen_ambig,
+        }
     finally:
         store.close()
 
@@ -154,9 +154,25 @@ def entries():
     return data
 
 
-@pytest.fixture
-def fired(entries, tmp_path, monkeypatch):
-    return _replay(entries, tmp_path, monkeypatch)
+@pytest.fixture(scope="module")
+def replay_result(entries, tmp_path_factory):
+    """Module-scoped chronological replay. Sharing across the module's 14
+    tests eliminates ~13 redundant full-day replays. Uses a MonkeyPatch()
+    with manual teardown because function-scoped monkeypatch fixtures
+    can't be consumed from a module-scoped fixture.
+    """
+    mp = pytest.MonkeyPatch()
+    try:
+        tmp_path = tmp_path_factory.mktemp("replay_2026_04_17")
+        yield _replay(entries, tmp_path, mp)
+    finally:
+        mp.undo()
+
+
+@pytest.fixture(scope="module")
+def fired(replay_result):
+    """Back-compat: most tests only care about the decisions dict."""
+    return replay_result["fired"]
 
 
 # ── Aggregate sanity ─────────────────────────────────────────────────
@@ -315,56 +331,20 @@ def test_no_false_highs_anywhere_in_day(fired):
 
 # ── Per-snap: ambig-path state side-effects ─────────────────────────
 
-def test_ambig_frames_leave_pending_or_soft_presence_trace(entries, tmp_path, monkeypatch):
+def test_ambig_frames_leave_pending_or_soft_presence_trace(replay_result):
     """The ambig-cup path isn't only about suppression — on 2 consecutive
     ambig frames, state.py promotes to soft presence (clears in_absence,
-    updates last_mother_seen_ts). Verify that at least one pair of
-    consecutive ambig frames in the day promoted to soft presence, by
-    observing that last_mother_seen_ts advanced across the ambig cluster.
+    updates last_mother_seen_ts). Verify that at least one ambig frame
+    appeared in the day and that last_mother_seen_ts did not regress
+    across it (either from ambig-pair promotions or from real
+    cardinal_on_nest=true observations downstream).
+
+    Consumes the shared module-scoped replay — no second full-day walk.
     """
-    from cardinal_nest_monitor.events import is_ambiguous_occupied_cup
-    from cardinal_nest_monitor.config import get_settings
-    settings = get_settings()
-    monkeypatch.setattr(settings, "lifecycle_tracking_enabled", True)
-    monkeypatch.setattr(settings, "enable_egg_count_alerts", False)
-
-    store = StateStore(tmp_path / "replay.sqlite")
-    try:
-        last_seen_before_ambig_cluster: float | None = None
-        last_seen_after_ambig_cluster: float | None = None
-        hit_ambig = False
-        for ts, name, obs, opus_obs, meta in entries:
-            # Before entering first ambig cluster, snapshot last_mother_seen_ts.
-            if is_ambiguous_occupied_cup(obs) and not hit_ambig:
-                last_seen_before_ambig_cluster = (
-                    store.get_state().last_mother_seen_ts
-                )
-                hit_ambig = True
-
-            pre_state = store.get_state()
-            sonnet_decision = evaluate(obs, pre_state, store, ts)
-            if sonnet_decision is None:
-                final_decision = None
-            else:
-                final_decision = _simulate_verifier(
-                    sonnet_decision, opus_obs, pre_state, store, ts,
-                )
-            store.record(
-                ts,
-                bool(meta.get("motion_triggered", False)),
-                None, obs, str(ts),
-            )
-            if final_decision is not None:
-                store.record_alert(final_decision, ts, None)
-
-        last_seen_after_ambig_cluster = store.get_state().last_mother_seen_ts
-        assert hit_ambig, "Expected at least one ambig frame in the day"
-        # last_mother_seen_ts must have advanced (either from promotions
-        # or from real cardinal_on_nest=true observations).
-        if last_seen_before_ambig_cluster is not None:
-            assert (
-                last_seen_after_ambig_cluster is None
-                or last_seen_after_ambig_cluster >= last_seen_before_ambig_cluster
-            ), "last_mother_seen_ts must not regress across the day"
-    finally:
-        store.close()
+    before = replay_result["last_mother_seen_ts_before_first_ambig"]
+    after = replay_result["last_mother_seen_ts_final"]
+    assert replay_result["saw_ambig"], "Expected at least one ambig frame in the day"
+    if before is not None:
+        assert after is None or after >= before, (
+            "last_mother_seen_ts must not regress across the day"
+        )

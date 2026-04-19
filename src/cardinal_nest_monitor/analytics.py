@@ -70,7 +70,7 @@ def _trip_detection(
     prior_state: str | None = None
 
     settings = get_settings()
-    from cardinal_nest_monitor.events import summary_indicates_ir_mode
+    from cardinal_nest_monitor.predicates import summary_indicates_ir_mode
 
     for row in observations:
         obs = _parse_obs(row)
@@ -144,7 +144,7 @@ def _presence_totals(
 
     # Build (ts, state) list filtered to confident observations
     settings = get_settings()
-    from cardinal_nest_monitor.events import summary_indicates_ir_mode
+    from cardinal_nest_monitor.predicates import summary_indicates_ir_mode
 
     points: list[tuple[float, str]] = []
     for row in observations:

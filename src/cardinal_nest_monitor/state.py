@@ -20,6 +20,11 @@ import time
 from pathlib import Path
 
 from cardinal_nest_monitor.config import get_settings
+from cardinal_nest_monitor.predicates import (
+    is_ambiguous_occupied_cup,
+    is_confirmed_chick_sighting,
+    observation_indicates_ir_mode,
+)
 from cardinal_nest_monitor.schema import (
     AlertDecision,
     NestObservation,
@@ -87,13 +92,6 @@ _ABSENCE_ENTER_SECONDS = 120  # mother gone ≥ 2 min → considered absent
 # window promotes to soft presence (clear in_absence, update last_seen).
 # 10 min covers the 5-min default + 1-min absence cadence with slack.
 _AMBIGUOUS_CONFIRM_WINDOW_S = 10 * 60
-
-# Chick-sighting confidence floor (2026-04-17). Higher than _MIN_CONFIDENCE
-# because a false chick sighting at day 3-4 of incubation (a confident
-# 0.82 reddish-blob call) led to a stale first_chick_sighting_ts that
-# would have bypassed the 2-sighting guard on a real later hatch. A
-# higher floor makes the 2-sighting guard more meaningful.
-_CHICK_SIGHTING_CONFIDENCE_FLOOR = 0.75
 
 # Pydantic's compact model_dump_json() produces "confidence":0.62 with no
 # spaces. Use a regex to pull the numeric value out instead of json.loads()
@@ -302,7 +300,6 @@ class StateStore:
             # fire false MEDIUMs. The IR check covers the sunset→23:00 gap
             # when the camera has switched to IR but quiet_hours hasn't begun.
             from datetime import datetime as _dt
-            from cardinal_nest_monitor.events import observation_indicates_ir_mode
             _quiet_now = get_settings().in_quiet_hours(
                 _dt.fromtimestamp(ts).time()
             )
@@ -355,8 +352,6 @@ class StateStore:
         # Explicit named threats (brown_thrasher, blue_jay, squirrel,
         # chipmunk) bypass this path and fire normally.
         if observation is not None:
-            from cardinal_nest_monitor.events import is_ambiguous_occupied_cup
-
             _is_ambig = is_ambiguous_occupied_cup(observation)
             if _is_ambig:
                 _window = _AMBIGUOUS_CONFIRM_WINDOW_S
@@ -502,19 +497,7 @@ class StateStore:
             #     treat the next one as a new "1st sighting".
             _CONFIRM_WINDOW_S = 4 * 3600
             if lifecycle_stage == "incubation":
-                # Tightened 2026-04-17 (Codex): only an explicit
-                # chicks_visible="true" observation at sufficient confidence
-                # counts as a chick signal. mother_feeding_chicks=true alone
-                # no longer advances the lifecycle — it previously triggered
-                # on any "food-in-beak" read which can false-positive on
-                # low-res images. The 0.75 confidence floor filters out
-                # speculative reddish-blob reads at day 3-4 of incubation
-                # that caused today's stale first_chick_sighting_ts.
-                chick_signal = (
-                    observation.chicks_visible == "true"
-                    and observation.confidence >= _CHICK_SIGHTING_CONFIDENCE_FLOOR
-                )
-                if chick_signal:
+                if is_confirmed_chick_sighting(observation):
                     if first_chick_sighting_ts is None:
                         # 1st sighting — record and wait for confirmation.
                         first_chick_sighting_ts = ts

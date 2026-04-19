@@ -20,13 +20,20 @@ import logging
 from datetime import datetime
 
 from cardinal_nest_monitor.config import get_settings
+from cardinal_nest_monitor.predicates import (
+    is_ambiguous_occupied_cup,
+    is_confirmed_chick_sighting,
+    observation_indicates_ir_mode,
+    species_list,
+    summary_indicates_ir_mode,
+)
 from cardinal_nest_monitor.schema import (
     AlertDecision,
     NestObservation,
     NestState,
     Severity,
 )
-from cardinal_nest_monitor.state import StateStore
+from cardinal_nest_monitor.state import StateStore, _row_passes_confidence
 
 log = logging.getLogger(__name__)
 
@@ -52,17 +59,6 @@ _LONG_ABSENCE_THRESHOLD = 300       # 5 min
 # actively defending — the user wants to know so they can decide to intervene.
 
 
-def _species_list(obs: NestObservation) -> list[str]:
-    """Materialize ThreatSpecies enum members to their string values."""
-    out = []
-    for t in obs.threat_species_detected:
-        if hasattr(t, "value"):
-            out.append(t.value)
-        else:
-            out.append(str(t))
-    return out
-
-
 def _smart_filter_drop(obs: NestObservation) -> bool:
     """Yard-motion suppression: no nest, no near-nest activity, no threats."""
     return (
@@ -70,100 +66,6 @@ def _smart_filter_drop(obs: NestObservation) -> bool:
         and (not obs.near_nest_activity)
         and (not obs.threat_species_detected)
     )
-
-
-# Phrases Sonnet uses when the snap is in Blink's IR/night mode. The Blink
-# Outdoor camera switches to IR at sunset (~20:00 in April-Atlanta), but our
-# wall-clock quiet_hours window doesn't start until 23:00 — leaving a ~3h
-# gap where IR is on, the cardinal is hard to ID in grayscale, and the old
-# rules would fire false MEDIUMs as the absence counter accumulated. See
-# evidence/2026-04-16/20-48-07_MEDIUM_unknown_bird/ for the canonical case.
-_IR_MODE_PHRASES = (
-    "ir mode",
-    "ir image",
-    "ir frame",
-    "infrared",
-    "grayscale",
-    "night vision",
-    "night ir",
-    "in ir",  # "settled in IR" / "in IR mode" loose match
-)
-
-
-def summary_indicates_ir_mode(summary: str | None) -> bool:
-    """True when the analyzer's free-form summary indicates an IR/night frame.
-
-    Matches phrases from `_IR_MODE_PHRASES`. Exposed as a string-only
-    helper (rather than always wrapping in a NestObservation) so analytics.py
-    can call it on the raw `observation_json["summary"]` field without
-    re-parsing into a pydantic model. Both analytics and live evaluation
-    must use this same matcher so the report and the alerts can never
-    disagree about whether a given frame was IR.
-    """
-    text = (summary or "").lower()
-    return any(phrase in text for phrase in _IR_MODE_PHRASES)
-
-
-def observation_indicates_ir_mode(obs: NestObservation) -> bool:
-    """True when the analyzer's own description indicates an IR/night image.
-
-    We trust Sonnet's text because it consistently mentions IR / grayscale /
-    infrared / night vision when the Blink camera has switched to night mode.
-    Cheaper and more reliable than re-decoding the JPEG to check grayscale-ness.
-    """
-    return summary_indicates_ir_mode(obs.summary)
-
-
-# Named threat species (as opposed to "unknown"). These bypass the
-# ambiguous-occupied-cup path and fire threat alerts on a single frame.
-_NAMED_THREATS = frozenset({
-    "brown_thrasher",
-    "blue_jay",
-    "squirrel",
-    "chipmunk",
-})
-
-
-def is_ambiguous_occupied_cup(obs: NestObservation) -> bool:
-    """True when a bird is visibly at the nest cup but the analyzer cannot
-    confirm species (no thrasher field marks visible + cardinal crest not
-    visible either). This is the dominant false-alarm pattern from
-    2026-04-17: the camera's below/behind angle hides the cardinal's crest
-    when she's sitting low, and Sonnet correctly returns
-    cardinal_on_nest="uncertain" + threat_species=["unknown"]. Without the
-    ambiguous-cup path, a single such frame fires BOTH a MEDIUM (not
-    "true") AND a HIGH predator_near_nest (unknown + near_nest).
-
-    Criteria:
-      - nest_visible=true (frame actually shows the nest)
-      - near_nest_activity=true (bird body is at/near the cup)
-      - cardinal_on_nest="uncertain" (not a confirmed presence or absence)
-      - direct_nest_interaction=false (an explicit direct attack is NEVER
-        ambiguous — a beak-in-cup reading must fire CRITICAL even if the
-        species is reported as "unknown". Codex P1 guardrail 2026-04-17.)
-      - threat_species_detected has no NAMED threat (it may contain
-        "unknown" or be empty, but a named thrasher/jay/squirrel/chipmunk
-        bypasses this path and fires threat rules directly)
-
-    Direct-nest-interaction AND named threats still fire on a single frame.
-    """
-    if not obs.nest_visible:
-        return False
-    if not obs.near_nest_activity:
-        return False
-    if obs.cardinal_on_nest != "uncertain":
-        return False
-    # Explicit direct attacks are never "ambiguous" — even if species is
-    # reported as "unknown", a beak-in-cup reading is a life-critical
-    # signal that must reach the CRITICAL direct_attack rule (rule 1).
-    if obs.direct_nest_interaction:
-        return False
-    # Any NAMED threat species bypasses the ambig path.
-    for t in obs.threat_species_detected:
-        species_str = t.value if hasattr(t, "value") else str(t)
-        if species_str in _NAMED_THREATS:
-            return False
-    return True
 
 
 def _cooldown_blocks(
@@ -253,8 +155,6 @@ def _lifecycle_event(
         and state.egg_laying_started_ts is not None
         and (ts - state.egg_laying_started_ts) >= 24 * 3600
     ):
-        from cardinal_nest_monitor.state import _row_passes_confidence
-
         cur = store._conn.execute(
             "SELECT observation_json FROM observations "
             "WHERE ts >= ? AND ts <= ? AND observation_json IS NOT NULL",
@@ -298,20 +198,7 @@ def _lifecycle_event(
     #   - 1st sighting sets first_chick_sighting_ts in state but fires
     #     nothing — we stay quiet until confirmation arrives.
     _CONFIRM_WINDOW_S = 4 * 3600
-    # Tightened 2026-04-17 (Codex): only explicit chicks_visible="true" at
-    # ≥0.75 confidence counts as a chick signal for hatch prediction.
-    # mother_feeding_chicks=true alone no longer fires the hatch alert
-    # (the feeding-event suppression for MEDIUM long_absence still uses
-    # it separately in _feeding_suppresses_medium). Prevents the
-    # reddish-blob false-positive from day 3-4 of incubation that caused
-    # today's stale first_chick_sighting_ts. Must stay in sync with the
-    # matching logic in state.py::record().
-    from cardinal_nest_monitor.state import _CHICK_SIGHTING_CONFIDENCE_FLOOR
-
-    if state.lifecycle_stage == "incubation" and (
-        observation.chicks_visible == "true"
-        and observation.confidence >= _CHICK_SIGHTING_CONFIDENCE_FLOOR
-    ):
+    if state.lifecycle_stage == "incubation" and is_confirmed_chick_sighting(observation):
         is_confirmation = (
             state.first_chick_sighting_ts is not None
             and (ts - state.first_chick_sighting_ts) <= _CONFIRM_WINDOW_S
@@ -429,7 +316,7 @@ def evaluate(
         if lifecycle_alert is not None:
             return lifecycle_alert
 
-    threats = _species_list(observation)
+    threats = species_list(observation)
     primary_species = threats[0] if threats else None
 
     # ── Rule 1: Direct attack (CRITICAL, 60s per species) ─────────────
