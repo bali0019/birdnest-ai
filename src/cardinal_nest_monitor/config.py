@@ -210,6 +210,31 @@ class Settings(BaseSettings):
             )
         return v_clean
 
+    @field_validator(
+        "discord_webhook_url",
+        "discord_feed_webhook_url",
+        "discord_analytics_webhook_url",
+        "discord_lifecycle_webhook_url",
+        "discord_backfill_webhook_url",
+        "discord_test_webhook_url",
+    )
+    @classmethod
+    def _validate_discord_webhook(cls, v: str) -> str:
+        """Reject non-Discord webhook URLs so a typo can't route alerts to an
+        attacker-controlled host or silently drop to a wrong channel.
+
+        Empty is valid (means the corresponding channel is disabled).
+        """
+        v = v.strip()
+        if not v:
+            return v  # empty is valid (means feature disabled)
+        if not v.startswith("https://discord.com/api/webhooks/"):
+            raise ValueError(
+                f"Discord webhook URL must start with "
+                f"'https://discord.com/api/webhooks/', got: {v[:50]!r}"
+            )
+        return v
+
     def in_active_hours(self, now: time) -> bool:
         start, end = self._parse_hours()
         if start <= end:
@@ -243,9 +268,16 @@ class Settings(BaseSettings):
         return self.snap_interval_seconds
 
     def ensure_dirs(self) -> None:
-        """Create runtime directories if missing. Safe to call repeatedly."""
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.evidence_dir.mkdir(parents=True, exist_ok=True)
+        """Create runtime directories if missing. Safe to call repeatedly.
+
+        Creates with mode 0o700 (owner-only) AND chmods to 0o700 afterwards
+        because mkdir's mode argument is masked by the ambient umask — the
+        explicit chmod is belt-and-suspenders so state.sqlite, spool JPEGs,
+        and evidence dirs are never world-readable on a shared machine.
+        """
+        for d in (self.data_dir, self.evidence_dir, self.spool_dir):
+            d.mkdir(parents=True, exist_ok=True, mode=0o700)
+            d.chmod(0o700)
 
 
 @lru_cache(maxsize=1)

@@ -10,13 +10,24 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
+# Upper bound on accepted JPEG input. Blink snaps are ~200 KB; 20 MB gives
+# 100x headroom for a genuinely high-res camera one day while preventing a
+# malformed/malicious multi-GB "JPEG" from decoding into gigapixels of RAM
+# (cv2.imdecode has no size ceiling of its own).
+_MAX_JPEG_BYTES = 20 * 1024 * 1024  # 20 MB
+
 
 def downscale_jpeg_b64(jpeg: bytes, max_width: int) -> str:
     """Decode a JPEG, downscale to <= max_width preserving aspect, re-encode
     as JPEG, and return raw base64 (no data: prefix).
 
-    Raises ValueError if the bytes cannot be decoded as a JPEG.
+    Raises ValueError if the bytes cannot be decoded as a JPEG, or if the
+    input exceeds _MAX_JPEG_BYTES.
     """
+    if len(jpeg) > _MAX_JPEG_BYTES:
+        raise ValueError(
+            f"JPEG input too large: {len(jpeg)} bytes > {_MAX_JPEG_BYTES}"
+        )
     arr = np.frombuffer(jpeg, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
@@ -69,8 +80,13 @@ def prepare_multi_image(jpeg: bytes) -> list[dict]:
       3. overview — ~512px downscale, full frame. Low-detail context so
                     the model can place the zoomed crop in the scene.
 
-    Raises ValueError if the JPEG cannot be decoded.
+    Raises ValueError if the JPEG cannot be decoded, or if the input
+    exceeds _MAX_JPEG_BYTES.
     """
+    if len(jpeg) > _MAX_JPEG_BYTES:
+        raise ValueError(
+            f"JPEG input too large: {len(jpeg)} bytes > {_MAX_JPEG_BYTES}"
+        )
     arr = np.frombuffer(jpeg, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:

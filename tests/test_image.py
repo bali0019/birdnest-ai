@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from cardinal_nest_monitor._image import (
+    _MAX_JPEG_BYTES,
     downscale_jpeg_b64,
     prepare_multi_image,
 )
@@ -132,3 +133,29 @@ def test_downscale_jpeg_b64_still_works() -> None:
     assert isinstance(b64, str)
     raw = base64.standard_b64decode(b64)
     assert raw[:3] == b"\xff\xd8\xff"
+
+
+def test_downscale_jpeg_b64_rejects_oversized_input() -> None:
+    """Input larger than _MAX_JPEG_BYTES must be rejected before decoding
+    to prevent a malformed multi-GB 'JPEG' from decoding into gigapixels
+    of RAM (cv2.imdecode has no size ceiling of its own)."""
+    oversized = b"\xff\xd8\xff" + b"\x00" * (_MAX_JPEG_BYTES + 1)
+    with pytest.raises(ValueError, match="too large"):
+        downscale_jpeg_b64(oversized, max_width=1024)
+
+
+def test_prepare_multi_image_rejects_oversized_input() -> None:
+    """Same cap applies to the multi-image path."""
+    oversized = b"\xff\xd8\xff" + b"\x00" * (_MAX_JPEG_BYTES + 1)
+    with pytest.raises(ValueError, match="too large"):
+        prepare_multi_image(oversized)
+
+
+def test_downscale_jpeg_b64_accepts_input_at_limit() -> None:
+    """An input exactly at _MAX_JPEG_BYTES is allowed (boundary check).
+    The bytes themselves aren't a valid JPEG; we expect the size check to
+    pass and the decode step to raise the other ValueError.
+    """
+    at_limit = b"\x00" * _MAX_JPEG_BYTES
+    with pytest.raises(ValueError, match="not a valid JPEG"):
+        downscale_jpeg_b64(at_limit, max_width=1024)
