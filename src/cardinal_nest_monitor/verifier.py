@@ -193,14 +193,32 @@ async def verify_alert(
     )
 
     if final is None:
-        log.info(
-            "Opus verification: %s %s → SUPPRESSED (Opus saw no alert). "
-            "Sonnet: %r | Opus: %r",
-            sonnet_decision.severity.value,
-            sonnet_decision.rule_id,
-            sonnet_obs.summary[:120],
-            opus_obs.summary[:120],
-        )
+        # Classify the suppression reason for the log line. The cardinal-
+        # positive override is operationally distinct from "Opus saw no
+        # alert" — the former says "we identified the cardinal, this is
+        # not a predator"; the latter says "Opus's rule engine disagreed
+        # with Sonnet for some other reason." Keeping both log shapes
+        # preserves post-hoc reviewability. Re-running the cheap
+        # is_cardinal_positive_no_threat predicate here avoids widening
+        # finalize_verification's return type just for this distinction.
+        if is_cardinal_positive_no_threat(opus_obs):
+            log.info(
+                "Opus verification: cardinal-positive no-threat override → "
+                "SUPPRESSED (sonnet wanted %s %s). Opus species=%r, summary=%r",
+                sonnet_decision.severity.value,
+                sonnet_decision.rule_id,
+                opus_obs.species_detected,
+                opus_obs.summary[:120],
+            )
+        else:
+            log.info(
+                "Opus verification: %s %s → SUPPRESSED (Opus saw no alert). "
+                "Sonnet: %r | Opus: %r",
+                sonnet_decision.severity.value,
+                sonnet_decision.rule_id,
+                sonnet_obs.summary[:120],
+                opus_obs.summary[:120],
+            )
     elif final is not sonnet_decision:
         log.info(
             "Opus verification: %s → %s (downgraded). "
