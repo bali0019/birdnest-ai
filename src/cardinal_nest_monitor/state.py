@@ -153,6 +153,34 @@ class StateStore:
         self._conn.execute("PRAGMA synchronous=NORMAL")  # WAL-safe balanced durability
         self._conn.executescript(_SCHEMA_SQL)
 
+        # Dedicated read-only connection for analytics-thread queries
+        # (CLAUDE.md §30). The writer connection runs in autocommit
+        # (isolation_level=None) with check_same_thread=False, which
+        # means analytics-thread reads against the same connection could
+        # observe partial state between the observations-row INSERT and
+        # the state-row UPDATE within record(). Opening a separate RO
+        # handle via `mode=ro` URI isolates analytics reads to WAL
+        # snapshots and guarantees the analytics thread never sees
+        # half-committed state. All hot-path writes still use self._conn;
+        # only get_observations_in_window / get_alerts_in_window use
+        # self._ro_conn.
+        self._ro_conn = sqlite3.connect(
+            f"file:{self.db_path}?mode=ro",
+            uri=True,
+            check_same_thread=False,
+            isolation_level=None,
+        )
+        self._ro_conn.row_factory = sqlite3.Row
+        # Harmless if already set by the writer — ensures the RO handle
+        # respects WAL so reads don't deadlock against concurrent writes.
+        try:
+            self._ro_conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            # mode=ro may refuse journal-mode changes on some SQLite
+            # builds; the writer has already set WAL so this is safe
+            # to ignore.
+            pass
+
         # Idempotent migration: add columns for features added after the
         # initial schema shipped. Existing DBs created before these columns
         # existed need them added in-place. ALTER TABLE throws "duplicate
@@ -767,11 +795,13 @@ class StateStore:
     ) -> list[sqlite3.Row]:
         """Return observations whose ts is in [start_ts, end_ts] ordered by ts.
 
-        Safe to call from a worker thread — the sqlite3 connection was opened
-        with check_same_thread=False. Analytics runs in a dedicated executor,
-        and this is a read-only query that doesn't contend with writes.
+        Routed through the dedicated read-only connection (self._ro_conn,
+        opened via `mode=ro` URI) so analytics-thread reads never observe
+        partial state from an in-progress record() write on the main loop.
+        See CLAUDE.md §30. Analytics runs in a dedicated executor; this
+        query is read-only and cross-thread safe.
         """
-        cur = self._conn.execute(
+        cur = self._ro_conn.execute(
             "SELECT id, ts, motion_triggered, prefilter_json, observation_json, evidence_dir "
             "FROM observations WHERE ts >= ? AND ts <= ? ORDER BY ts ASC",
             (start_ts, end_ts),
@@ -781,8 +811,12 @@ class StateStore:
     def get_alerts_in_window(
         self, start_ts: float, end_ts: float,
     ) -> list[sqlite3.Row]:
-        """Return alerts whose ts is in [start_ts, end_ts] ordered by ts."""
-        cur = self._conn.execute(
+        """Return alerts whose ts is in [start_ts, end_ts] ordered by ts.
+
+        Routed through self._ro_conn for the same cross-thread isolation
+        reason as get_observations_in_window. See CLAUDE.md §30.
+        """
+        cur = self._ro_conn.execute(
             "SELECT id, ts, severity, rule_id, species, title, summary "
             "FROM alerts WHERE ts >= ? AND ts <= ? ORDER BY ts ASC",
             (start_ts, end_ts),
@@ -792,5 +826,9 @@ class StateStore:
     def close(self) -> None:
         try:
             self._conn.close()
+        except Exception:
+            pass
+        try:
+            self._ro_conn.close()
         except Exception:
             pass

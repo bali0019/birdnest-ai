@@ -347,22 +347,25 @@ def main() -> int:
             print("Write changes? [dry-run] — rerun without --dry-run to apply.")
             return 0
 
-        # ── Apply ────────────────────────────────────────────────────
-        updates: list[str] = []
-        params: list[float | None] = []
-        final_egg = current_egg
-        final_inc = current_inc
-        if egg_write:
-            updates.append("egg_laying_started_ts = ?")
-            params.append(new_egg)
-            final_egg = new_egg
-        if inc_write:
-            updates.append("incubation_started_ts = ?")
-            params.append(new_inc)
-            final_inc = new_inc
+        # ── Apply (fixed-shape UPDATE) ───────────────────────────────
+        # Use a static SQL string that always writes both columns. For
+        # each column we either write the newly computed value (if
+        # the diff said to write) or preserve the existing value. This
+        # avoids dynamically constructing an UPDATE statement from a
+        # list of column fragments — even though every fragment here
+        # is a hard-coded literal, the builder pattern is the wrong
+        # shape to leave in the tree because it invites SQLi if a
+        # future contributor lets user input drive column selection.
+        final_egg: float | None = new_egg if egg_write else current_egg
+        final_inc: float | None = new_inc if inc_write else current_inc
 
-        sql = f"UPDATE state SET {', '.join(updates)} WHERE id = 1"
-        conn.execute(sql, params)
+        conn.execute(
+            "UPDATE state SET "
+            " egg_laying_started_ts = ?, "
+            " incubation_started_ts = ? "
+            "WHERE id = 1",
+            (final_egg, final_inc),
+        )
         print("Applied.")
         print()
         print("Final state:")

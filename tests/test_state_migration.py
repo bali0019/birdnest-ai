@@ -184,3 +184,146 @@ def test_existing_db_with_real_data_survives_migration(tmp_path):
         assert state.pending_ambiguous_frame_ts is None
     finally:
         store.close()
+
+
+# ── RO connection for analytics-thread queries (CLAUDE.md §30) ─────────
+# The analytics thread pool reads observations/alerts via a dedicated
+# read-only connection. Verifies the connection exists, is distinct from
+# the writer, cannot be written to, and that the public analytics methods
+# route through it — so a partial-state window between the observations
+# INSERT and the state UPDATE inside record() can never be observed
+# across threads.
+
+
+def test_analytics_ro_connection_exists_and_is_distinct(tmp_path):
+    """StateStore.__init__ must open both a writer connection and a
+    separate RO connection. They must not be the same object."""
+    db = tmp_path / "state.sqlite"
+    store = StateStore(db)
+    try:
+        assert hasattr(store, "_conn"), "writer connection missing"
+        assert hasattr(store, "_ro_conn"), "RO connection missing"
+        assert store._conn is not store._ro_conn, (
+            "RO connection must be a separate sqlite3.Connection, not an alias"
+        )
+    finally:
+        store.close()
+
+
+def test_analytics_ro_connection_refuses_writes(tmp_path):
+    """The RO connection must reject INSERT/UPDATE against the DB — that's
+    the whole point. `mode=ro` URI yields a connection that raises
+    OperationalError on any write attempt."""
+    db = tmp_path / "state.sqlite"
+    store = StateStore(db)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            store._ro_conn.execute(
+                "UPDATE state SET last_mother_seen_ts = ? WHERE id = 1",
+                (12345.0,),
+            )
+    finally:
+        store.close()
+
+
+class _ExecCountingProxy:
+    """Wraps a sqlite3.Connection and counts .execute() calls. sqlite3's
+    Connection type refuses attribute-level monkeypatching (execute is
+    a slot on the C type), so we use a proxy object instead."""
+
+    def __init__(self, inner, bucket: dict, name: str):
+        self._inner = inner
+        self._bucket = bucket
+        self._name = name
+
+    def execute(self, *args, **kwargs):
+        self._bucket[self._name] = self._bucket.get(self._name, 0) + 1
+        return self._inner.execute(*args, **kwargs)
+
+    def __getattr__(self, attr):
+        # Fallback for anything else (close, cursor, etc.).
+        return getattr(self._inner, attr)
+
+
+def test_get_observations_in_window_uses_ro_connection(tmp_path):
+    """get_observations_in_window must route its SELECT through the RO
+    connection, not the writer. Guards against a regression where
+    someone "simplifies" back to a single connection."""
+    db = tmp_path / "state.sqlite"
+    store = StateStore(db)
+    try:
+        calls: dict[str, int] = {}
+        store._conn = _ExecCountingProxy(store._conn, calls, "writer")
+        store._ro_conn = _ExecCountingProxy(store._ro_conn, calls, "ro")
+
+        # Call the analytics method.
+        rows = store.get_observations_in_window(0.0, 9999999999.0)
+        assert rows == [], "empty DB should return empty"
+
+        assert calls.get("ro", 0) == 1, (
+            "get_observations_in_window must route exactly one SELECT "
+            "through the RO connection"
+        )
+        assert calls.get("writer", 0) == 0, (
+            "get_observations_in_window must NOT touch the writer "
+            "connection (analytics thread isolation guarantee)"
+        )
+    finally:
+        store.close()
+
+
+def test_get_alerts_in_window_uses_ro_connection(tmp_path):
+    """get_alerts_in_window must route its SELECT through the RO
+    connection, same as get_observations_in_window."""
+    db = tmp_path / "state.sqlite"
+    store = StateStore(db)
+    try:
+        calls: dict[str, int] = {}
+        store._conn = _ExecCountingProxy(store._conn, calls, "writer")
+        store._ro_conn = _ExecCountingProxy(store._ro_conn, calls, "ro")
+
+        rows = store.get_alerts_in_window(0.0, 9999999999.0)
+        assert rows == [], "empty DB should return empty"
+        assert calls.get("ro", 0) == 1
+        assert calls.get("writer", 0) == 0
+    finally:
+        store.close()
+
+
+def test_close_shuts_down_both_connections(tmp_path):
+    """close() must close both the writer and the RO connection — leaving
+    either open leaks a file handle + a sqlite3.Connection. A follow-up
+    operation on either should raise ProgrammingError."""
+    db = tmp_path / "state.sqlite"
+    store = StateStore(db)
+    store.close()
+    # sqlite3 raises ProgrammingError when you use a closed connection.
+    with pytest.raises(sqlite3.ProgrammingError):
+        store._conn.execute("SELECT 1")
+    with pytest.raises(sqlite3.ProgrammingError):
+        store._ro_conn.execute("SELECT 1")
+
+
+def test_ro_connection_sees_committed_writer_state(tmp_path):
+    """Belt-and-suspenders: a write on the writer connection must be
+    visible through the RO connection (they must share the DB file, not
+    be isolated from each other entirely). WAL snapshot semantics mean
+    the RO handle may see a slightly older view than the writer within
+    a transaction — in autocommit every statement commits immediately,
+    so post-statement reads on the RO conn must see the committed row.
+    """
+    db = tmp_path / "state.sqlite"
+    store = StateStore(db)
+    try:
+        # Write directly via the writer.
+        store._conn.execute(
+            "INSERT INTO observations (ts, motion_triggered, prefilter_json, "
+            "observation_json, evidence_dir) VALUES (?, ?, ?, ?, ?)",
+            (12345.0, 0, None, None, None),
+        )
+        # Read via the analytics method (routes through RO conn).
+        rows = store.get_observations_in_window(0.0, 9999999999.0)
+        assert len(rows) == 1
+        assert rows[0]["ts"] == pytest.approx(12345.0)
+    finally:
+        store.close()
