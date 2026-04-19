@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+import stat
 import sys
 import time
 from datetime import datetime
@@ -32,7 +34,103 @@ log = logging.getLogger(__name__)
 
 # Where the 2FA PIN can be dropped when running non-interactively. The PIN
 # poller checks this path every 2 seconds for up to 5 minutes.
-PIN_FILE_PATH = Path("/tmp/cardinal_nest_blink_pin")
+#
+# Security: the PIN file lives under ~/.cache/ (user-owned, mode 0700 parent)
+# rather than /tmp (world-writable, predictable, shared). Before reading, we
+# validate ownership, regular-file status, lack of symlink, and strict mode
+# (no group/other access). This closes a local-user symlink / race / snoop
+# vector that existed when the file lived at /tmp/cardinal_nest_blink_pin.
+PIN_FILE_PATH = Path.home() / ".cache" / "cardinal_nest_monitor" / "blink_pin"
+
+
+def _ensure_pin_dir_secure(path: Path) -> None:
+    """Create the parent directory of `path` with mode 0700 (user-only).
+
+    Some umasks prevent makedirs from honouring the `mode=` parameter, so
+    we follow up with an explicit chmod to 0o700.
+    """
+    parent = path.parent
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(parent, 0o700)
+    except OSError:
+        # If we can't chmod (e.g. on a non-POSIX fs), downstream lstat
+        # checks still protect the PIN file itself.
+        log.warning("could not chmod %s to 0o700", parent)
+
+
+def _pin_file_is_safe(path: Path) -> bool:
+    """Validate that `path` is safe to read as a PIN file.
+
+    Returns True only if ALL of these hold:
+      * The path exists.
+      * The path is a regular file (NOT a symlink, NOT a directory, NOT a FIFO).
+      * The file is owned by the current user (st.st_uid == os.getuid()).
+      * The mode grants NO group or other access (st.st_mode & 0o077 == 0).
+
+    On any failure, returns False and logs a clear error explaining the
+    rejection. Callers MUST treat False as "no PIN available" and refuse
+    to read the file's contents.
+    """
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        log.error("PIN file lstat failed at %s: %s", path, e)
+        return False
+
+    # Reject symlinks explicitly (lstat does not follow them, so S_ISLNK
+    # tells us whether the path ITSELF is a symlink).
+    if stat.S_ISLNK(st.st_mode):
+        log.error(
+            "refusing to read PIN: %s is a symlink (potential hijack); "
+            "remove it and re-create as a regular 0600 file owned by %s",
+            path,
+            os.getuid(),
+        )
+        return False
+
+    if not stat.S_ISREG(st.st_mode):
+        log.error(
+            "refusing to read PIN: %s is not a regular file (mode=%o)",
+            path,
+            st.st_mode,
+        )
+        return False
+
+    if st.st_uid != os.getuid():
+        log.error(
+            "refusing to read PIN: %s is owned by uid=%d (expected uid=%d); "
+            "potential impersonation",
+            path,
+            st.st_uid,
+            os.getuid(),
+        )
+        return False
+
+    if st.st_mode & 0o077 != 0:
+        log.error(
+            "refusing to read PIN: %s has permissive mode 0o%o (group/other "
+            "readable); re-create with chmod 0600",
+            path,
+            stat.S_IMODE(st.st_mode),
+        )
+        return False
+
+    return True
+
+
+def _sanitize_clip_timestamp(raw: Any) -> str:
+    """Return a filename-safe token derived from a remote-provided clip timestamp.
+
+    Blink's clip metadata includes a `time` string that we use as part of a
+    local path under evidence/. The upstream value is remote-controlled, so
+    we whitelist only [A-Za-z0-9_-]; every other character becomes `_`.
+    This prevents path-traversal (`..`, `/`) and exotic characters that
+    could confuse path handling or shell consumers of the evidence dir.
+    """
+    return re.sub(r"[^A-Za-z0-9_-]", "_", str(raw if raw is not None else "unknown"))
 
 
 class _SnapCycleSkipped(Exception):
@@ -46,10 +144,25 @@ async def _read_2fa_pin() -> str:
     """Get a 2FA PIN from one of three sources, in order:
       1. BLINK_PIN environment variable (instant)
       2. Real interactive stdin if attached to a TTY
-      3. File at /tmp/cardinal_nest_blink_pin (polled for up to 5 minutes)
+      3. File at $HOME/.cache/cardinal_nest_monitor/blink_pin (polled for up to 5 minutes)
 
     The file-polling path is the one that works when the script runs in the
     background — drop the PIN into the file and the script picks it up.
+
+    Security: the PIN file must be a regular file owned by the current user
+    with mode 0600 (no group/other access). Symlinks, wrong ownership, and
+    permissive modes are rejected with a clear log message — the file is
+    silently skipped that tick, so you can fix the file and the poller will
+    pick up the corrected version. To drop the PIN:
+
+        install -m 600 /dev/stdin ~/.cache/cardinal_nest_monitor/blink_pin <<< "123456"
+
+    or equivalently:
+
+        umask 077
+        printf '%s' "123456" > ~/.cache/cardinal_nest_monitor/blink_pin
+
+    Both create the file with 0600 so the validator accepts it.
     """
     env_pin = os.environ.get("BLINK_PIN", "").strip()
     if env_pin:
@@ -60,32 +173,55 @@ async def _read_2fa_pin() -> str:
         return input("Enter 2FA PIN from email: ").strip()
 
     # Non-interactive: poll the file.
-    if PIN_FILE_PATH.exists():
-        # Stale file from a previous run — clear it so we don't re-use a stale PIN.
-        try:
-            PIN_FILE_PATH.unlink()
-        except OSError:
-            pass
+    _ensure_pin_dir_secure(PIN_FILE_PATH)
+
+    # Stale file from a previous run — clear it so we don't re-use a stale PIN.
+    # We only unlink if the file is SAFE; a symlink or wrong-owner file should
+    # NOT be silently deleted, because unlinking it would mask the anomaly
+    # and let an attacker re-plant it. Instead we log and leave it for the
+    # operator to clean up manually.
+    if PIN_FILE_PATH.exists() or PIN_FILE_PATH.is_symlink():
+        if _pin_file_is_safe(PIN_FILE_PATH):
+            try:
+                PIN_FILE_PATH.unlink()
+            except OSError:
+                pass
+        else:
+            log.error(
+                "refusing to unlink suspicious pre-existing PIN file at %s; "
+                "fix manually before dropping a new PIN",
+                PIN_FILE_PATH,
+            )
 
     print(
         f"\n⏳ 2FA PIN required. Check email at {get_settings().blink_username}.\n"
-        f"   Drop the PIN into {PIN_FILE_PATH} when you have it:\n"
-        f"     echo 'YOUR_PIN' > {PIN_FILE_PATH}\n"
+        f"   Drop the PIN into {PIN_FILE_PATH} when you have it (mode 0600):\n"
+        f"     install -m 600 /dev/stdin {PIN_FILE_PATH} <<< 'YOUR_PIN'\n"
+        f"   or:\n"
+        f"     umask 077 && printf '%%s' 'YOUR_PIN' > {PIN_FILE_PATH}\n"
         f"   (waiting up to 5 minutes)\n",
         flush=True,
     )
 
     deadline = time.time() + 300
     while time.time() < deadline:
-        if PIN_FILE_PATH.exists():
-            pin = PIN_FILE_PATH.read_text().strip()
-            try:
-                PIN_FILE_PATH.unlink()
-            except OSError:
-                pass
-            if pin:
-                log.info("Got PIN from file (%d digits)", len(pin))
-                return pin
+        if PIN_FILE_PATH.exists() or PIN_FILE_PATH.is_symlink():
+            if _pin_file_is_safe(PIN_FILE_PATH):
+                try:
+                    pin = PIN_FILE_PATH.read_text().strip()
+                except OSError as e:
+                    log.error("failed to read PIN file %s: %s", PIN_FILE_PATH, e)
+                    pin = ""
+                try:
+                    PIN_FILE_PATH.unlink()
+                except OSError:
+                    pass
+                if pin:
+                    log.info("Got PIN from file (%d digits)", len(pin))
+                    return pin
+            # else: _pin_file_is_safe already logged the specific rejection
+            # reason; we just continue polling so the operator can fix the
+            # file and have it picked up.
         await asyncio.sleep(2)
     raise RuntimeError(f"Timed out waiting for PIN at {PIN_FILE_PATH}")
 
@@ -117,7 +253,20 @@ async def connect(prompt_2fa: bool = False) -> Blink:
         )
 
     try:
-        await blink.start()
+        # 60s hard bound. Blink's auth endpoint has been observed to hang
+        # under network flakiness; without this bound, the downloader boot
+        # path would hang forever and no watchdog would fire because the
+        # main event loop never got to the watchdog task. See CLAUDE.md §19
+        # (timeout budget table) — 60s matches analyzer.analyze(). If this
+        # times out, the service boot fails loudly and launchd will restart
+        # per its KeepAlive policy.
+        await asyncio.wait_for(blink.start(), timeout=60)
+    except asyncio.TimeoutError:
+        log.error(
+            "blink.start() timed out after 60s; Blink auth endpoint may be "
+            "unreachable. Failing boot so launchd can restart the service."
+        )
+        raise
     except BlinkTwoFARequiredError:
         if not prompt_2fa:
             raise
@@ -354,9 +503,32 @@ async def download_clip(
     clip: dict[str, Any],
     dest: Path,
 ) -> bool:
-    """Download the MP4 referenced by clip['clip'] to dest. Returns True on success."""
+    """Download the MP4 referenced by clip['clip'] to dest. Returns True on success.
+
+    Security: the caller is expected to have built `dest` using
+    `_sanitize_clip_timestamp` on any remote-controlled component of
+    `clip` (specifically `clip['time']`). As defense-in-depth we also
+    re-sanitize `dest.name` here so a naive caller that did a bare
+    `clip["time"].replace(":", "-")` cannot let a malicious timestamp
+    slip path separators or traversal tokens (`..`, `/`, `\`) through.
+    """
     url = f"{blink.urls.base_url}{clip['clip']}"
     headers = {"TOKEN_AUTH": blink.auth.token}
+
+    # Defense-in-depth: re-sanitize the filename. Preserves the extension
+    # if present; every other character outside [A-Za-z0-9_-] becomes `_`.
+    safe_stem = _sanitize_clip_timestamp(dest.stem)
+    safe_suffix = _sanitize_clip_timestamp(dest.suffix.lstrip(".")) if dest.suffix else ""
+    safe_name = f"{safe_stem}.{safe_suffix}" if safe_suffix else safe_stem
+    safe_dest = dest.parent / safe_name
+    if safe_dest != dest:
+        log.warning(
+            "download_clip: sanitized dest filename %r -> %r",
+            dest.name,
+            safe_dest.name,
+        )
+        dest = safe_dest
+
     try:
         # 60s hard bound on the entire GET + read: video bytes can be big
         # but this is not the hot path, so bound it generously.

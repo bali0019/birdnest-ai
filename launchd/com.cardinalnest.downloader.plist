@@ -34,6 +34,12 @@
     <key>ProcessType</key>
     <string>Background</string>
 
+    <!-- Restrict runtime file mode. 63 decimal = 077 octal → files 0600,
+         dirs 0700. Protects spool JPEGs, state.sqlite, evidence dirs, and
+         any re-saved blink_credentials.json from other local users. -->
+    <key>Umask</key>
+    <integer>63</integer>
+
     <!-- Logs go to ~/Library/Logs/cardinal-nest-monitor/ — rotated by macOS newsyslog. -->
     <key>StandardOutPath</key>
     <string>/Users/YOUR_USERNAME/Library/Logs/cardinal-nest-monitor/downloader.out.log</string>

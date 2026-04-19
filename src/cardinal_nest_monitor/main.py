@@ -24,6 +24,7 @@ from typing import Any
 from cardinal_nest_monitor import analyzer as analyzer_mod
 from cardinal_nest_monitor import verifier as verifier_mod
 from cardinal_nest_monitor.blink_client import (
+    _sanitize_clip_timestamp,
     connect,
     download_clip,
     motion_loop,
@@ -308,7 +309,12 @@ class Pipeline:
             now_dt = datetime.now()
             day_dir = self.evidence.root_dir / now_dt.strftime("%Y-%m-%d")
             day_dir.mkdir(parents=True, exist_ok=True)
-            ts_safe = (clip.get("time") or now_dt.strftime("%H-%M-%S")).replace(":", "-")
+            # Sanitize clip timestamp against Blink-supplied strings — any
+            # non-alphanumeric character becomes `_`. Defense against a
+            # remote-controlled path separator escaping `day_dir`.
+            ts_safe = _sanitize_clip_timestamp(
+                clip.get("time") or now_dt.strftime("%H-%M-%S")
+            )
             dest = day_dir / f"clip_{ts_safe}.mp4"
             from cardinal_nest_monitor.blink_client import (  # local import for binding
                 download_clip as _dl,
@@ -712,7 +718,12 @@ async def run_combined() -> int:
             now_dt = datetime.now()
             day_dir = evidence.root_dir / now_dt.strftime("%Y-%m-%d")
             day_dir.mkdir(parents=True, exist_ok=True)
-            ts_safe = (clip.get("time") or now_dt.strftime("%H-%M-%S")).replace(":", "-")
+            # Sanitize clip timestamp against Blink-supplied strings — any
+            # non-alphanumeric character becomes `_`. Defense against a
+            # remote-controlled path separator escaping `day_dir`.
+            ts_safe = _sanitize_clip_timestamp(
+                clip.get("time") or now_dt.strftime("%H-%M-%S")
+            )
             dest = day_dir / f"clip_{ts_safe}.mp4"
             ok = await download_clip(blink, cam, clip, dest)
             log.info("clip download %s: %s", "ok" if ok else "failed", dest)

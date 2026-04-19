@@ -42,6 +42,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,6 +53,37 @@ log = logging.getLogger(__name__)
 _SNAP_SUFFIX = "_snap.jpg"
 _META_SUFFIX = "_meta.json"
 _FILENAME_TS_FORMAT = "%Y-%m-%dT%H-%M-%S"
+
+
+def _is_safe_regular_file(path: Path) -> bool:
+    """True if ``path`` is a regular file owned by the current user (not a symlink).
+
+    Security guard for the spool's claim and read paths. An untrusted local
+    process that can write into ``pending/`` could otherwise drop a symlink
+    at ``*_snap.jpg`` / ``*_meta.json`` pointing at arbitrary local files
+    (e.g. ``/etc/passwd``); the analyzer would then forward those bytes into
+    Anthropic, evidence dirs, and Discord.
+
+    Uses ``os.lstat`` (not ``os.stat``) so we see the symlink itself rather
+    than following it. Rejects:
+      * symlinks
+      * non-regular files (FIFOs, sockets, directories, block/char devices)
+      * files owned by a UID other than the current process's UID
+    """
+    try:
+        st = path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        log.warning("spool: lstat failed for %s: %s", path, exc)
+        return False
+    if stat.S_ISLNK(st.st_mode):
+        return False
+    if not stat.S_ISREG(st.st_mode):
+        return False
+    if st.st_uid != os.getuid():
+        return False
+    return True
 
 
 def _ts_to_filename(ts: float) -> str:
@@ -192,8 +224,22 @@ def _list_candidates(pending: Path) -> list[tuple[float, Path, Path]]:
     for entry in entries:
         name = entry.name
         if name.endswith(_SNAP_SUFFIX):
+            if not _is_safe_regular_file(entry):
+                log.warning(
+                    "spool: rejecting unsafe pending entry %s "
+                    "(symlink / non-regular / wrong owner)",
+                    entry,
+                )
+                continue
             stems_with_snap[name[: -len(_SNAP_SUFFIX)]] = entry
         elif name.endswith(_META_SUFFIX):
+            if not _is_safe_regular_file(entry):
+                log.warning(
+                    "spool: rejecting unsafe pending entry %s "
+                    "(symlink / non-regular / wrong owner)",
+                    entry,
+                )
+                continue
             stems_with_meta[name[: -len(_META_SUFFIX)]] = entry
 
     for stem, snap_path in stems_with_snap.items():
@@ -227,6 +273,16 @@ def claim_next(spool_dir: Path) -> tuple[bytes, dict, Path] | None:
         return None
 
     for ts, snap_src, meta_src in candidates:
+        # Re-validate right before the rename. An attacker could have swapped
+        # a regular file for a symlink between _list_candidates and here;
+        # rejecting now prevents the symlink from ever entering processing/.
+        if not _is_safe_regular_file(snap_src) or not _is_safe_regular_file(meta_src):
+            log.warning(
+                "spool: rejecting %s at claim time (unsafe; symlink / non-regular / wrong owner)",
+                snap_src.name,
+            )
+            continue
+
         snap_dst = processing / snap_src.name
         meta_dst = processing / meta_src.name
         try:
@@ -249,6 +305,22 @@ def claim_next(spool_dir: Path) -> tuple[bytes, dict, Path] | None:
                 os.rename(snap_dst, snap_src)
             except FileNotFoundError:  # pragma: no cover
                 pass
+            continue
+
+        # Belt-and-suspenders: re-validate in processing/ before reading.
+        # The earlier checks should already have prevented symlinks from
+        # landing here, but if another vector dropped one into processing/
+        # directly we still refuse to read it.
+        if not _is_safe_regular_file(snap_dst) or not _is_safe_regular_file(meta_dst):
+            log.warning(
+                "spool: claimed entry %s failed post-rename safety check; discarding",
+                snap_dst.name,
+            )
+            for p in (snap_dst, meta_dst):
+                try:
+                    p.unlink()
+                except (FileNotFoundError, OSError):
+                    pass
             continue
 
         # Load the payload from the *processing* paths so we return exactly

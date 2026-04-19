@@ -19,6 +19,7 @@ The 5 public functions tested here:
 from __future__ import annotations
 
 import json
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -295,3 +296,234 @@ def test_meta_round_trip_preserves_dict(tmp_path: Path) -> None:
     assert got_meta == meta, (
         f"meta dict did not round-trip cleanly.\n  wrote: {meta}\n  got:   {got_meta}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Security guard tests (Codex C3): claim_next must reject symlinks, non-regular
+# files, and files owned by a different UID. Without these checks, an untrusted
+# local process with write access to pending/ could make the analyzer read and
+# forward arbitrary local files (e.g. /etc/passwd) into Anthropic/Discord.
+# ---------------------------------------------------------------------------
+
+
+def test_claim_rejects_symlink_in_pending(tmp_path: Path) -> None:
+    """A symlinked *_snap.jpg in pending/ must not be claimed — even pointing at a real file."""
+    spool = tmp_path / "spool"
+    pending = spool / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (spool / "processing").mkdir(parents=True, exist_ok=True)
+
+    # Decoy file the symlink points at. Could be anything (stand-in for /etc/passwd).
+    decoy = tmp_path / "secret.txt"
+    decoy.write_bytes(b"SECRET CONTENTS THE ATTACKER WANTS EXFILTRATED")
+
+    # Attacker drops a symlink named like a valid snap + a matching meta.json.
+    attacker_stem = _ts_stem(time.time() + 10)  # newer than any real snap we'll write
+    attacker_snap = pending / f"{attacker_stem}_snap.jpg"
+    attacker_meta = pending / f"{attacker_stem}_meta.json"
+    os.symlink(decoy, attacker_snap)
+    attacker_meta.write_text(json.dumps({"ts": time.time() + 10, "evil": True}))
+
+    # Also write a legitimate newer pair via the real API (younger ts for tie-break clarity).
+    good_jpeg = _fake_jpeg(b"legit")
+    good_meta = {"ts": time.time(), "kind": "good"}
+    write_snap(good_jpeg, good_meta, spool)
+
+    result = claim_next(spool)
+
+    # The attacker's symlinked snap must NOT be claimed. Either we get the good one
+    # (because the attacker's was filtered out) or we get None (if only the symlink was
+    # visible), but under NO circumstances should we return the decoy bytes.
+    if result is not None:
+        got_jpeg, got_meta, proc_path = result
+        assert got_jpeg != decoy.read_bytes(), (
+            "SECURITY REGRESSION: claim_next returned the symlinked target's contents"
+        )
+        assert got_jpeg == good_jpeg, (
+            f"expected legitimate snap bytes, got unexpected {got_jpeg!r}"
+        )
+        assert got_meta == good_meta, (
+            "expected legitimate meta, got something else"
+        )
+
+    # The symlink should still be in pending/ (we skipped it, didn't move or read it).
+    assert attacker_snap.is_symlink(), (
+        "symlink should still be in pending/ — claim_next must not touch it"
+    )
+
+
+def test_claim_rejects_symlink_when_alone_in_pending(tmp_path: Path) -> None:
+    """A symlinked pair alone in pending/ → claim_next returns None."""
+    spool = tmp_path / "spool"
+    pending = spool / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (spool / "processing").mkdir(parents=True, exist_ok=True)
+
+    decoy = tmp_path / "decoy.txt"
+    decoy.write_bytes(b"not for you")
+
+    stem = _ts_stem(time.time())
+    os.symlink(decoy, pending / f"{stem}_snap.jpg")
+    # Meta as a real file but snap is a symlink — still unsafe.
+    (pending / f"{stem}_meta.json").write_text(json.dumps({"ts": time.time()}))
+
+    result = claim_next(spool)
+    assert result is None, (
+        f"claim_next on a symlink-only spool must return None, got {result!r}"
+    )
+
+
+def test_claim_rejects_symlinked_meta(tmp_path: Path) -> None:
+    """A legit snap.jpg paired with a symlinked meta.json must also be rejected."""
+    spool = tmp_path / "spool"
+    pending = spool / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (spool / "processing").mkdir(parents=True, exist_ok=True)
+
+    decoy = tmp_path / "evil_meta.json"
+    decoy.write_text(json.dumps({"ts": time.time(), "evil": "yes"}))
+
+    stem = _ts_stem(time.time())
+    (pending / f"{stem}_snap.jpg").write_bytes(_fake_jpeg(b"real-snap"))
+    os.symlink(decoy, pending / f"{stem}_meta.json")
+
+    result = claim_next(spool)
+    # The pair is unsafe because the meta is a symlink — whole pair skipped.
+    assert result is None, (
+        f"pair with symlinked meta must not be claimed, got {result!r}"
+    )
+
+
+def test_claim_rejects_non_regular_file_fifo(tmp_path: Path) -> None:
+    """A FIFO named like a *_snap.jpg in pending/ must be skipped (not a regular file)."""
+    if not hasattr(os, "mkfifo"):  # pragma: no cover — Windows
+        pytest.skip("os.mkfifo not available on this platform")
+
+    spool = tmp_path / "spool"
+    pending = spool / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (spool / "processing").mkdir(parents=True, exist_ok=True)
+
+    # FIFO at a valid-looking snap path.
+    fifo_stem = _ts_stem(time.time() + 10)
+    os.mkfifo(str(pending / f"{fifo_stem}_snap.jpg"))
+    # Real meta file so the pair would look complete to naive pairing logic.
+    (pending / f"{fifo_stem}_meta.json").write_text(json.dumps({"ts": time.time() + 10}))
+
+    # Add a legitimate pair. claim_next must find the legit pair, not hang on / read the FIFO.
+    good_jpeg = _fake_jpeg(b"good-alongside-fifo")
+    good_meta = {"ts": time.time(), "kind": "good"}
+    write_snap(good_jpeg, good_meta, spool)
+
+    result = claim_next(spool)
+    assert result is not None, "claim_next should have found the legitimate pair"
+    got_jpeg, got_meta, _ = result
+    assert got_jpeg == good_jpeg, "claim_next returned something other than the legit snap"
+    assert got_meta == good_meta
+
+
+def test_claim_rejects_directory_at_snap_path(tmp_path: Path) -> None:
+    """A directory named like a *_snap.jpg must be treated as non-regular and skipped."""
+    spool = tmp_path / "spool"
+    pending = spool / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (spool / "processing").mkdir(parents=True, exist_ok=True)
+
+    # Directory masquerading as a snap file.
+    dir_stem = _ts_stem(time.time() + 10)
+    (pending / f"{dir_stem}_snap.jpg").mkdir()
+    (pending / f"{dir_stem}_meta.json").write_text(json.dumps({"ts": time.time() + 10}))
+
+    # Legit pair alongside.
+    good_jpeg = _fake_jpeg(b"good-alongside-dir")
+    good_meta = {"ts": time.time(), "kind": "good"}
+    write_snap(good_jpeg, good_meta, spool)
+
+    result = claim_next(spool)
+    assert result is not None, "claim_next should have returned the legitimate pair"
+    got_jpeg, got_meta, _ = result
+    assert got_jpeg == good_jpeg
+    assert got_meta == good_meta
+
+
+def test_is_safe_regular_file_helper_direct(tmp_path: Path) -> None:
+    """Direct unit test of _is_safe_regular_file covering each rejection branch."""
+    from cardinal_nest_monitor.spool import _is_safe_regular_file
+
+    # Missing file → False
+    missing = tmp_path / "does_not_exist.jpg"
+    assert _is_safe_regular_file(missing) is False
+
+    # Regular file owned by current uid → True
+    regular = tmp_path / "good.jpg"
+    regular.write_bytes(b"ok")
+    assert _is_safe_regular_file(regular) is True
+
+    # Symlink → False (even pointing at a regular file we own)
+    link = tmp_path / "link.jpg"
+    os.symlink(regular, link)
+    assert _is_safe_regular_file(link) is False
+
+    # Directory → False (not a regular file)
+    directory = tmp_path / "adir"
+    directory.mkdir()
+    assert _is_safe_regular_file(directory) is False
+
+    # FIFO → False
+    if hasattr(os, "mkfifo"):
+        fifo = tmp_path / "fifo"
+        os.mkfifo(str(fifo))
+        assert _is_safe_regular_file(fifo) is False
+
+
+def test_claim_rejects_wrong_owner_via_mocked_lstat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Monkeypatch os.getuid so a real file appears owned by someone else.
+
+    Creating a real file owned by a different UID requires sudo and is not
+    portable across test environments. Instead we flip os.getuid to a value
+    that definitely won't match the file's real st_uid, forcing the check to
+    reject every real file in the spool.
+    """
+    spool = tmp_path / "spool"
+
+    # Set up a legit pair via the real API.
+    good_jpeg = _fake_jpeg(b"owner-guarded")
+    good_meta = {"ts": time.time(), "kind": "good"}
+    write_snap(good_jpeg, good_meta, spool)
+
+    # Pre-fetch the real uid then swap getuid to return a definitely-different one.
+    real_uid = os.getuid()
+    fake_uid = real_uid + 999_999  # guaranteed to not match any real owner
+    monkeypatch.setattr("cardinal_nest_monitor.spool.os.getuid", lambda: fake_uid)
+
+    result = claim_next(spool)
+    assert result is None, (
+        f"claim_next must reject files owned by a different uid, got {result!r}"
+    )
+
+    # The real pair should still be in pending/ (untouched — we didn't move or delete).
+    pending_entries = sorted(p.name for p in (spool / "pending").iterdir())
+    assert any(n.endswith("_snap.jpg") for n in pending_entries), (
+        "legitimate snap should still be in pending/ after owner rejection"
+    )
+    assert any(n.endswith("_meta.json") for n in pending_entries), (
+        "legitimate meta should still be in pending/ after owner rejection"
+    )
+
+
+def test_normal_claim_still_works_after_security_hardening(tmp_path: Path) -> None:
+    """Sanity: the existing happy path keeps working with the new safety checks."""
+    spool = tmp_path / "spool"
+    jpeg = _fake_jpeg(b"happy-path")
+    meta = {"ts": time.time(), "kind": "happy"}
+
+    write_snap(jpeg, meta, spool)
+
+    claimed = claim_next(spool)
+    assert claimed is not None
+    got_jpeg, got_meta, proc_path = claimed
+    assert got_jpeg == jpeg
+    assert got_meta == meta
+    assert proc_path.parent.name == "processing"
