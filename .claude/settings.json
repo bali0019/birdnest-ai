@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(launchctl list *)",
+      "Bash(launchctl print *)",
+      "mcp__plugin_imessage_imessage__chat_messages"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [[ \"$CLAUDE_FILE_PATH\" == *.py ]]; then python3 -m py_compile \"$CLAUDE_FILE_PATH\" 2>&1 || { echo \"py_compile failed on $CLAUDE_FILE_PATH — fix the syntax error before continuing\" >&2; exit 2; }; fi"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\" && unstaged=$(git diff --name-only 2>/dev/null | grep -v '^AGENTS.md$' | head -5); untracked=$(git ls-files --others --exclude-standard 2>/dev/null | grep -v '^AGENTS.md$' | head -5); unpushed=$(git log --oneline '@{u}..HEAD' 2>/dev/null | head -3); if [[ -n \"$unstaged\" || -n \"$untracked\" || -n \"$unpushed\" ]]; then echo '── session-end check ──' >&2; [[ -n \"$unstaged\" ]] && echo \"uncommitted changes:\" >&2 && echo \"$unstaged\" | sed 's/^/  /' >&2; [[ -n \"$untracked\" ]] && echo \"untracked files:\" >&2 && echo \"$untracked\" | sed 's/^/  /' >&2; [[ -n \"$unpushed\" ]] && echo \"unpushed commits:\" >&2 && echo \"$unpushed\" | sed 's/^/  /' >&2; fi; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}
