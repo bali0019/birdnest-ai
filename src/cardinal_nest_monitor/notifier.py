@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -18,7 +19,7 @@ from typing import Any, Awaitable, Callable
 import aiohttp
 
 from cardinal_nest_monitor.config import get_settings
-from cardinal_nest_monitor.schema import AlertDecision, NestObservation, PrefilterResult
+from cardinal_nest_monitor.schema import AlertDecision, NestObservation, PrefilterResult, Severity
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +28,67 @@ log = logging.getLogger(__name__)
 #   field value ≤ 1024 chars, description ≤ 4096, footer text ≤ 2048.
 _FIELD_VALUE_MAX = 1024
 _DESCRIPTION_MAX = 4096
+
+# ── Security: response body + log redaction ────────────────────────────
+# Discord webhook URLs embed the auth token in the path:
+#   https://discord.com/api/webhooks/{id}/{token}
+# If that token leaks into error logs (via aiohttp.ClientError.__str__,
+# .args, raw response bodies, etc.) anyone who can read the logs gets the
+# ability to post arbitrary messages as the bot. Redact EVERYWHERE that
+# text could carry a webhook URL.
+_WEBHOOK_URL_RE = re.compile(r"(/webhooks/\d+)/[A-Za-z0-9_.\-]+")
+_ABS_WEBHOOK_URL_RE = re.compile(r"https?://\S*?/webhooks/\d+/[A-Za-z0-9_.\-]+")
+# Cap how much of a Discord response body we ever log. The webhook API can
+# return arbitrarily large embed-validation error bodies; we only need the
+# head to diagnose, and longer bodies increase leak surface.
+_RESPONSE_LOG_MAX = 500
+
+
+def _redact(text: Any) -> str:
+    """Redact Discord webhook tokens from arbitrary text.
+
+    Accepts any stringifiable input so call sites can pass exceptions
+    directly — an ``aiohttp.ClientError`` can include the full target URL
+    in ``.args`` / ``str(e)`` and we want to scrub BOTH the absolute
+    ``https://.../webhooks/ID/TOKEN`` form and any bare ``/webhooks/ID/TOKEN``
+    path fragment before the bytes reach the log.
+    """
+    s = str(text)
+    # Absolute-URL form first (covers aiohttp error messages that include
+    # the scheme+host) — replace the path-token segment after the ID.
+    s = _ABS_WEBHOOK_URL_RE.sub(
+        lambda m: _WEBHOOK_URL_RE.sub(r"\1/REDACTED", m.group(0)), s,
+    )
+    # Any remaining bare path form.
+    s = _WEBHOOK_URL_RE.sub(r"\1/REDACTED", s)
+    return s
+
+
+def _scrub_response_body(body: str) -> str:
+    """Cap a Discord response body for logging and strip embedded
+    webhook URLs. Used on both 4xx and 5xx response-body logs.
+    """
+    redacted = _redact(body)
+    if len(redacted) > _RESPONSE_LOG_MAX:
+        return redacted[: _RESPONSE_LOG_MAX - 1] + "…"
+    return redacted
+
+
+def _with_allowed_mentions(payload: dict[str, Any]) -> dict[str, Any]:
+    """Defense-in-depth: stamp every outbound payload with
+    ``allowed_mentions: {parse: []}`` so Discord will never render
+    ``@everyone`` / ``@here`` / role pings — even if a future code path
+    accidentally ships user-supplied text in a ``content`` field. The
+    current embed-only paths already can't render those mentions per
+    Discord's webhook docs, but the guard is cheap insurance.
+
+    Preserves any existing ``allowed_mentions`` override so specific sites
+    can opt in to different behavior later without the wrapper silently
+    stomping their choice.
+    """
+    if "allowed_mentions" not in payload:
+        payload = {**payload, "allowed_mentions": {"parse": []}}
+    return payload
 
 
 def _fmt_duration(seconds: int) -> str:
@@ -238,10 +300,17 @@ class Notifier:
         if snap_path is not None and Path(snap_path).exists():
             embed["image"] = {"url": "attachment://snap.jpg"}
             payload = {"embeds": [embed]}
-            return await self._send_multipart(payload, Path(snap_path), url_override=target_url)
+            # Pass severity so the retry policy knows this is an urgent
+            # alert — CRITICAL/HIGH get up to 3 retries with exponential
+            # backoff + Retry-After honor on 429. See _post_with_retry.
+            return await self._send_multipart(
+                payload, Path(snap_path), url_override=target_url, severity=sev,
+            )
 
         payload = {"embeds": [embed]}
-        return await self._send_json(payload, url_override=target_url)
+        return await self._send_json(
+            payload, url_override=target_url, severity=sev,
+        )
 
     async def send_battery_status(
         self,
@@ -634,11 +703,19 @@ class Notifier:
         return "—"
 
     async def _send_json(
-        self, payload: dict[str, Any], url_override: str | None = None
+        self,
+        payload: dict[str, Any],
+        url_override: str | None = None,
+        severity: Severity | None = None,
     ) -> bool:
         target = url_override if url_override else self.webhook_url
+        # Defense-in-depth: every outbound Discord payload carries
+        # allowed_mentions={"parse": []} so that no `content`-field text
+        # (even if one is added later) can ever trigger @everyone / @here /
+        # role pings. Current payloads are embed-only; this is insurance.
+        payload = _with_allowed_mentions(payload)
 
-        async def do_post() -> tuple[int, str]:
+        async def do_post() -> tuple[int, dict[str, str], str]:
             session = await self._get_session()
             async with session.post(
                 target,
@@ -646,25 +723,33 @@ class Notifier:
                 headers={"Content-Type": "application/json"},
             ) as resp:
                 body = "" if resp.status == 204 else await resp.text()
-                return resp.status, body
+                # Retry-After is the only header we inspect; snapshotting
+                # it here keeps the retry policy free of aiohttp types.
+                return resp.status, dict(resp.headers), body
 
-        return await self._post_with_retry(do_post)
+        return await self._post_with_retry(do_post, severity=severity)
 
     async def _send_multipart(
         self,
         payload: dict[str, Any],
         image_path: Path,
         url_override: str | None = None,
+        severity: Severity | None = None,
     ) -> bool:
         try:
             image_bytes = image_path.read_bytes()
         except OSError as e:
+            # image_path is a local path — safe to log; `e` is OSError,
+            # which does not carry webhook URLs.
             log.error("discord: cannot read snap %s: %s", image_path, e)
             return False
 
         target = url_override if url_override else self.webhook_url
+        # Defense-in-depth: stamp allowed_mentions on the multipart
+        # payload_json as well. See _send_json for rationale.
+        payload = _with_allowed_mentions(payload)
 
-        async def do_post() -> tuple[int, str]:
+        async def do_post() -> tuple[int, dict[str, str], str]:
             session = await self._get_session()
             form = aiohttp.FormData()
             form.add_field("payload_json", json.dumps(payload))
@@ -676,32 +761,85 @@ class Notifier:
             )
             async with session.post(target, data=form) as resp:
                 body = "" if resp.status == 204 else await resp.text()
-                return resp.status, body
+                return resp.status, dict(resp.headers), body
 
-        return await self._post_with_retry(do_post)
+        return await self._post_with_retry(do_post, severity=severity)
+
+    # ── retry policy ───────────────────────────────────────────────────
+    # CRITICAL / HIGH alerts warrant real persistence. If Discord returns
+    # 429, honor Retry-After (cap 30s) and retry. On transient 5xx /
+    # network error, exponentially back off 1s → 3s → 10s (max 3 retries).
+    # MEDIUM / LOW / None keep the existing two-try, cheap behavior —
+    # these are frequent, and we don't want a flapping webhook to burn
+    # budget or delay the snap pipeline.
+    _URGENT_BACKOFF_S: tuple[float, ...] = (1.0, 3.0, 10.0)
+    _RETRY_AFTER_CAP_S: float = 30.0
+
+    @staticmethod
+    def _is_urgent(severity: Severity | None) -> bool:
+        return severity in (Severity.CRITICAL, Severity.HIGH)
+
+    @staticmethod
+    def _parse_retry_after(headers: dict[str, str]) -> float | None:
+        """Return the Retry-After value in seconds (capped), or None if
+        the header is missing / unparseable. Only the numeric-seconds form
+        is honored — Discord always sends numeric seconds for rate-limits,
+        and HTTP-date retry-after is never appropriate for an urgent
+        alert-retry budget.
+        """
+        raw = headers.get("Retry-After") or headers.get("retry-after")
+        if not raw:
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if value < 0:
+            return 0.0
+        return min(value, Notifier._RETRY_AFTER_CAP_S)
 
     async def _post_with_retry(
-        self, do_post: Callable[[], Awaitable[tuple[int, str]]]
+        self,
+        do_post: Callable[[], Awaitable[tuple[int, dict[str, str], str]]],
+        *,
+        severity: Severity | None = None,
     ) -> bool:
-        for attempt in (1, 2):
+        urgent = self._is_urgent(severity)
+        # Non-urgent paths keep the original 2-attempt behavior. Urgent
+        # paths (CRITICAL/HIGH) get up to 3 retries with exponential
+        # backoff, plus Retry-After handling on 429.
+        max_attempts = 1 + len(self._URGENT_BACKOFF_S) if urgent else 2
+        backoffs = self._URGENT_BACKOFF_S if urgent else (1.0,)
+
+        for attempt in range(1, max_attempts + 1):
             try:
                 # Hard 15s bound on every Discord POST. Normal p99 is <1s.
                 # If the webhook stalls (which it did during the 2026-04-13
                 # outage), don't block the caller forever — log and retry
-                # once, then give up so the pipeline stays unblocked.
-                status, body = await asyncio.wait_for(do_post(), timeout=15)
+                # per the policy above, then give up so the pipeline
+                # stays unblocked.
+                status, headers, body = await asyncio.wait_for(
+                    do_post(), timeout=15,
+                )
             except asyncio.TimeoutError:
                 log.error(
-                    "discord: POST timed out after 15s (attempt %d)", attempt,
+                    "discord: POST timed out after 15s (attempt %d/%d, urgent=%s)",
+                    attempt, max_attempts, urgent,
                 )
-                if attempt == 1:
-                    await asyncio.sleep(1.0)
+                if attempt < max_attempts:
+                    await asyncio.sleep(backoffs[attempt - 1])
                     continue
                 return False
             except aiohttp.ClientError as e:
-                log.error("discord: transport error (attempt %d): %s", attempt, e)
-                if attempt == 1:
-                    await asyncio.sleep(1.0)
+                # aiohttp.ClientError can include the target URL in .args
+                # / str(e). Redact the webhook token before logging so the
+                # log stream never carries a live auth token.
+                log.error(
+                    "discord: transport error (attempt %d/%d): %s",
+                    attempt, max_attempts, _redact(e),
+                )
+                if attempt < max_attempts:
+                    await asyncio.sleep(backoffs[attempt - 1])
                     continue
                 return False
 
@@ -710,14 +848,40 @@ class Notifier:
             # Both indicate success.
             if status in (200, 204):
                 return True
-            if 500 <= status < 600 and attempt == 1:
+
+            # 429 Rate-limit: honor Retry-After (capped) and retry,
+            # regardless of severity. Non-urgent paths still cap at
+            # their 2-attempt budget so a sustained rate-limit doesn't
+            # indefinitely delay a feed post.
+            if status == 429:
+                retry_after = self._parse_retry_after(headers) or 1.0
                 log.warning(
-                    "discord: HTTP %d (attempt %d), retrying after 1s: %s",
-                    status, attempt, body[:500],
+                    "discord: HTTP 429 (attempt %d/%d), Retry-After=%.1fs: %s",
+                    attempt, max_attempts, retry_after,
+                    _scrub_response_body(body),
                 )
-                await asyncio.sleep(1.0)
+                if attempt < max_attempts:
+                    await asyncio.sleep(retry_after)
+                    continue
+                return False
+
+            # Transient 5xx: retry per the backoff schedule.
+            if 500 <= status < 600 and attempt < max_attempts:
+                delay = backoffs[attempt - 1]
+                log.warning(
+                    "discord: HTTP %d (attempt %d/%d), retrying after %.1fs: %s",
+                    status, attempt, max_attempts, delay,
+                    _scrub_response_body(body),
+                )
+                await asyncio.sleep(delay)
                 continue
-            log.error("discord: HTTP %d: %s", status, body[:2000])
+
+            # 4xx (other than 429) or final-retry 5xx — give up. Response
+            # body is scrubbed + capped at 500 chars before logging so we
+            # never leak a webhook URL echoed in a Discord error body.
+            log.error(
+                "discord: HTTP %d: %s", status, _scrub_response_body(body),
+            )
             return False
 
         return False

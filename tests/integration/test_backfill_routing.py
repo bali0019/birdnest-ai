@@ -172,21 +172,23 @@ async def test_backfill_alert_title_has_age_prefix(
 
     captured: list[dict] = []
 
-    async def fake_send_multipart(payload, image_path, url_override=None):
+    async def fake_send_multipart(payload, image_path, url_override=None, **kwargs):
         captured.append({
             "payload": payload,
             "image_path": image_path,
             "url_override": url_override,
+            **kwargs,
         })
         return True
 
-    async def fake_send_json(payload, url_override=None):
+    async def fake_send_json(payload, url_override=None, **kwargs):
         # In case the snap.jpg path doesn't exist on disk, the notifier
         # falls back to _send_json. Capture there too for robustness.
         captured.append({
             "payload": payload,
             "image_path": None,
             "url_override": url_override,
+            **kwargs,
         })
         return True
 
