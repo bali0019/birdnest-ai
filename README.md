@@ -312,6 +312,10 @@ Most of the `.env` is set-and-forget. The handful that change the shape of the s
 
 See [`.env.example`](./.env.example) for the full list with documentation.
 
+**Privacy considerations.** The Discord feed channel receives every snap with the camera image attached; keep channel invites private — anyone with access sees the whole stream.
+
+**Reproducible installs.** For CI or production deploys, `pip install -r requirements.lock` pins every transitive dependency to the exact version in the committed lockfile. For dev work, `pip install -e .[dev]` is still the path — see CLAUDE.md §30 for the rotation cadence.
+
 ## Tech stack
 
 Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos, on five separate channels. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. 192 tests in pytest, including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.

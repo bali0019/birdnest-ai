@@ -764,6 +764,14 @@ source venv/bin/activate
 python -m cardinal_nest_monitor.tools.pause 10           # pause 10 min
 python -m cardinal_nest_monitor.tools.pause --clear      # resume now
 
+# ── Install deps (lockfile, see §30) ──────────────────────────────
+# Production / CI (exact-pin reproducibility — preferred for deploy):
+pip install -r requirements.lock
+# Dev (editable install with optional test extras):
+pip install -e .[dev]
+# Refresh the lockfile after a deliberate upgrade:
+pip freeze --all > requirements.lock && git add requirements.lock
+
 # ── Stop / start / restart (two-service mode) ────────────────────
 # Analyzer-only restart (most common — code changes to analyzer/events/notifier):
 launchctl kickstart -k gui/$(id -u)/com.cardinalnest.analyzer
@@ -1001,6 +1009,35 @@ The `_IR_MODE_PHRASES` allowlist in `events.py::observation_indicates_ir_mode` m
 **Deferred — Track 3 analyzer prompt rewrite.** An in-progress Bayesian prior ("bird sitting IN the cup + no thrasher features → cardinal by default") was held back from this hotfix because it over-corrected on `wm_mom_returning_02.jpg` in the lifecycle regression suite (got `cardinal_on_nest="true"` at 0.62 where expected was `"uncertain"`). Will re-ship once the prior is narrowed (require at least ONE partial cardinal feature or specific camera geometry) and the 13-image regression passes 13/13. Until then, a smaller class of false MEDIUMs remains — specifically frames where the analyzer's `near_nest_activity=false` disagrees with its own summary text ("bird in cup"). Example: 2026-04-17 13:15 and 13:20. The rules engine correctly trusts the structured field; only prompt tightening can fix this class.
 
 **Operational clean-up that self-expired.** The 2026-04-17 15:23:26 false chick sighting recorded a stale `first_chick_sighting_ts` in production state. The existing 2-sighting guard's 4-hour window auto-invalidated it at 19:23:26 EDT — no manual DB cleanup was required. If a similar false sighting appears in the future AND a real hatch follows within 4 hours, the §29d raised confidence floor (0.75) makes that re-occurrence much less likely.
+
+---
+
+### 30. Secret rotation runbook + analytics-thread RO connection + supply-chain lockfile (2026-04-18)
+
+Three related hardening items landed in the 2026-04-18 security pass.
+
+**(a) Analytics-thread read-only SQLite connection.** `StateStore` now opens a **second** SQLite connection via `mode=ro` URI for the two analytics methods (`get_observations_in_window`, `get_alerts_in_window`). The writer connection (`self._conn`, autocommit, check_same_thread=False) is still used by every hot-path call on the asyncio event loop. The RO connection (`self._ro_conn`) runs on the analytics thread pool only. Without this split, the analytics thread could observe a partial state between the observations-row INSERT and the state-row UPDATE inside `record()` — autocommit means every statement commits immediately, but two statements in a row are not atomic across threads. The RO handle reads through WAL snapshots and never sees half-committed state. `close()` shuts down both connections. Do not route writes through `self._ro_conn` (it will fail with `attempt to write a readonly database` — that's the point). Do not remove the split "for simplicity" — the analytics thread pool exists precisely so a slow SQLite query can't block the alert hot path, and the RO split is what makes that safe.
+
+**(b) Fixed-shape UPDATE in `tools/lifecycle_backfill.py`.** The backfill tool used to build an UPDATE string by joining a `list[str]` of fragments (`"egg_laying_started_ts = ?"` / `"incubation_started_ts = ?"`). Both fragments were hard-coded string literals, so no SQLi was reachable today, but the pattern is the wrong shape to leave in the tree — a future contributor letting user input drive column selection would re-open the door. Refactored to a single static SQL that always writes both columns, using the new value when the column was chosen to update and the existing value otherwise. Preserves the dry-run path and the "refuse to overwrite without --force" logic. The builder pattern is now banned in this module — any future column additions should extend the fixed SQL, not re-introduce dynamic fragments.
+
+**(c) Supply-chain lockfile.** `requirements.lock` is now committed at repo root (`pip freeze --all` output). For CI / production reproducibility: `pip install -r requirements.lock` pins every transitive dep to exact versions. For normal dev work, `pip install -e .[dev]` (from `pyproject.toml`) is still the path. Regenerate the lockfile whenever you knowingly upgrade a dep: `source venv/bin/activate && pip freeze --all > requirements.lock && git add requirements.lock`. Don't let the lock drift silently from the venv — if `pip freeze` shows something not in the lock, either commit the new lock or figure out why an unexpected package landed in the venv.
+
+**(d) Secret rotation runbook.** Three secrets live outside git; here's how to rotate each without an outage.
+
+- **Anthropic API key.** Revoke the old key at https://console.anthropic.com/settings/keys (in the same workspace — keys are workspace-scoped, see §3). Create a new key in the same workspace. Edit `.env` and update `ANTHROPIC_API_KEY`. Restart the analyzer only: `launchctl kickstart -k gui/$(id -u)/com.cardinalnest.analyzer`. The downloader does not use Anthropic and keeps running. Verify new key works: `tail -F ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log` and watch for the next snap getting a clean response from Sonnet. If the key is bad you'll see `AuthenticationError` in the log.
+
+- **Discord webhooks.** For each affected channel (alerts / feed / analytics / backfill / lifecycle / test): in Discord, open channel settings → Integrations → Webhooks, delete the existing webhook, create a new one, copy the URL. Edit `.env` and update the corresponding `DISCORD_*_WEBHOOK_URL`. Restart analyzer only (downloader doesn't post to Discord): `launchctl kickstart -k gui/$(id -u)/com.cardinalnest.analyzer`. Smoke test: `source venv/bin/activate && python -m cardinal_nest_monitor.tools.test_discord` — sends a 🧪 embed to the alerts channel using the rotated URL.
+
+- **Blink account password.** Change the password in the Blink mobile app. Locally, delete the cached credentials and re-run the 2FA flow:
+  ```bash
+  rm blink_credentials.json
+  python -m cardinal_nest_monitor --auth-only
+  # PIN is read from ~/.cache/cardinal_nest_monitor/blink_pin (see Agent 2 note)
+  # or from the legacy /tmp/cardinal_nest_blink_pin fallback.
+  ```
+  Wait for the email → write the PIN to the file → script picks it up and writes a new `blink_credentials.json`. Restart downloader: `launchctl kickstart -k gui/$(id -u)/com.cardinalnest.downloader`. The analyzer does not auth to Blink so it's unaffected.
+
+Don't skip the "restart only one service" part of each recipe — the whole point of the §20 decouple is that you can rotate an Anthropic key without interrupting snap capture, and rotate a Blink password without touching the Discord-facing analyzer.
 
 ---
 

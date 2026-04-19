@@ -3,6 +3,9 @@
 blink_credentials.json
 *.lock
 pause.lock
+# Supply-chain lockfile — checked in for reproducible prod/CI installs
+# (see CLAUDE.md §30). Allow through the *.lock exclusion above.
+!requirements.lock
 
 # Runtime data
 data/
