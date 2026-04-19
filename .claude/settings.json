@@ -13,7 +13,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [[ \"$CLAUDE_FILE_PATH\" == *.py ]]; then python3 -m py_compile \"$CLAUDE_FILE_PATH\" 2>&1 || { echo \"py_compile failed on $CLAUDE_FILE_PATH — fix the syntax error before continuing\" >&2; exit 2; }; fi"
+            "command": "FILE_PATH=$(jq -r '.tool_input.file_path // empty'); if [[ -n \"$FILE_PATH\" && \"$FILE_PATH\" == *.py ]]; then python3 -m py_compile \"$FILE_PATH\" 2>&1 || { echo \"py_compile failed on $FILE_PATH — fix the syntax error before continuing\" >&2; exit 1; }; fi"
           }
         ]
       }
