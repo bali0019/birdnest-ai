@@ -6,9 +6,9 @@
 
 ## Timeline
 
-- **Apr 13** — Egg laying
-- **Apr 14 – 23** — Incubation (currently day ~10 of ~12)
-- **Apr 25 – 27** — Expected hatch
+- **Apr 13** — Egg laying begins
+- **Apr 14** — Incubation begins
+- **Apr 25 – 27** — Hatch (expected)
 
 ![Brown Thrasher stealing an egg from the cardinal nest](evidence/reference/thrasher_stealing_egg_highlighted.gif)
 
