@@ -4,20 +4,6 @@
 > ### 🥚 Nest Status: **Eggs incubating**
 > Mom is on the nest. System is watching 24/7. *I'll update this page as they hatch and fledge.*
 
-## Crazy-but-true things about this bird
-
-Things that came up while I was researching this project and refused to stop surprising me. All grounded in actual ornithology — no tall tales.
-
-- **Female cardinals sing.** Unusual among the familiar temperate backyard songbirds — robins, sparrows, warblers — where singing is almost entirely a male job. The female Northern Cardinal sings full songs from the nest while incubating, and ornithologists think she's coordinating with the male about food deliveries. (Female song is actually widespread and ancestral across songbirds globally; it's just rare among the ones most Americans notice.)
-- **His red color depends on what he eats.** Cardinal red is built from carotenoid pigments absorbed from berries and fruits. Males on poorer diets tend to look duller and less vibrantly red, so plumage intensity works as an honest signal of health — the female reads it before choosing a mate. (The occasional bright-yellow cardinal you see in viral news stories is almost always a genetic or metabolic mutation, not just a bad diet.)
-- **Young males are brown, with a dark bill.** For his first few months, a male cardinal looks essentially like a female — dusky-tan body, no red — but distinguishable by a grayish-black bill instead of the adult orange one. He starts acquiring his red plumage during his first fall molt. If you see a female-looking cardinal with a dark bill and a few awkward red feathers around September, you're watching a teenager mid-costume change.
-- **They're socially monogamous.** Pairs stay together year-round and often across multiple breeding seasons, jointly defending territory and raising broods. (Genetic studies do find some extra-pair paternity, so "mate for life" is a bit of a romanticization.) During courtship the male brings the female seeds beak-to-beak — it looks uncannily like kissing, and it has a name: "mate-feeding." He keeps doing it through incubation, so she doesn't have to leave the eggs to eat.
-- **Males attack their own reflections.** Car side mirrors, windows, shiny bumpers — a territorial male sees a rival that refuses to leave and hurls himself at it for weeks on end. If you have cardinals in your yard long enough you will eventually witness a very small, very angry bird losing a grudge match with a Toyota.
-- **The crest is a mood ring.** It's mobile — flattened when she's relaxed, raised when she's alarmed or excited. This is genuinely a problem for computer vision: a cardinal sitting low on the nest with her crest flat looks distressingly similar to a Brown Thrasher (which has no crest at all), which is exactly how this project's analyzer wound up firing a false CRITICAL on its own protected bird back on April 15.
-- **They don't migrate.** Year-round residents across the eastern US. The Christmas-card image of a cardinal perched in the snow is accurate — they just sit there through January, bright red against gray, unbothered. In the last century they've been slowly expanding their range NORTH, into southern Canada; warmer winters and backyard bird feeders have apparently made the commute optional.
-- **They're named after Catholic cardinals.** The clergy, not the baseball team. Early European colonists saw the scarlet feathers and the pointed crest and thought of the red robes and miters of senior Catholic officials, and the name stuck. Linnaeus made it official in 1758.
-- **State bird of seven US states** — more than any other species. Illinois, Indiana, Kentucky, North Carolina, Ohio, Virginia, West Virginia. They are, demographically speaking, very popular.
-
 ## Timeline
 
 - **Apr 13** — Egg laying begins
@@ -26,6 +12,8 @@ Things that came up while I was researching this project and refused to stop sur
 - **May 5 – 7** — Fledge (expected)
 
 ![Brown Thrasher stealing an egg from the cardinal nest](evidence/reference/thrasher_stealing_egg_highlighted.gif)
+
+*The attack that started this project. A Brown Thrasher at the cardinal's nest, four seconds from rim to gone with an egg in its beak.*
 
 The female cardinal chose the rose bush by the back door. It was a terrible location, strategically speaking: low to the ground, close to foot traffic, visible from the kitchen window. But she was not consulting anyone. She built the nest in three days, a tight cup of twigs and grass wedged into the thorns, and by the second week of April there were eggs in it.
 
@@ -181,6 +169,20 @@ The female cardinal and the Brown Thrasher are both brownish birds. The analyzer
 | Reaction time when she's home | Under five minutes |
 | Models that know the cardinal exists | 2 |
 | Cardinals that know the models exist | 0 |
+
+## A few things about the cardinal
+
+Things that came up while I was researching this project and refused to stop surprising me. All grounded in ornithology, not folklore.
+
+- **Female cardinals sing.** Unusual among the familiar backyard songbirds of temperate North America, where singing is almost always a male job. The female Northern Cardinal sings full songs from the nest while she is incubating, and ornithologists think she is coordinating with the male about when to bring her food. (Female song turns out to be widespread and ancestral across songbirds globally. It is just rare among the ones Americans happen to notice.)
+- **His red color depends on what he eats.** Cardinal red is built from carotenoid pigments absorbed from berries and fruits. Males on poorer diets come out duller, so the intensity of his plumage works as an honest signal of health. The female reads it before choosing a mate. (The occasional bright yellow cardinal you see in viral news stories is almost always a genetic or metabolic mutation, not just a bad diet.)
+- **Young males are brown, with a dark bill.** For his first few months a male cardinal looks much like a female. Dusky tan body, no red. The tell is the bill. Adults have the iconic bright orange bill; juveniles have a dark one. He starts acquiring his adult plumage during his first fall molt. If you see a cardinal that looks mostly female, with a dark bill and a handful of awkward red feathers coming in around September, you are watching a teenager in the middle of a costume change.
+- **They are socially monogamous.** Pairs stay together year round and often across multiple breeding seasons, jointly defending territory and raising broods. Genetic studies have found some infidelity among the broods, so the popular line about cardinals mating for life is a bit of a romanticization. During courtship the male brings the female seeds and places them directly in her beak. It looks uncannily like kissing. It has a name: courtship feeding. He keeps doing it through incubation, so she does not have to leave the eggs to eat.
+- **Males attack their own reflections.** Car side mirrors, windows, shiny bumpers. A territorial male sees a rival that refuses to leave and hurls himself at it for weeks. If you have cardinals in your yard long enough, you will eventually see a very small, very angry bird losing a grudge match with a Toyota.
+- **The crest is a mood ring.** It is mobile. Flat when she is relaxed, raised when she is alarmed or excited. This is genuinely a problem for computer vision. A cardinal sitting low on the nest with her crest flat looks distressingly similar to a Brown Thrasher, which has no crest at all. On April 15 the analyzer in this project fired a false CRITICAL alert on its own protected bird for exactly this reason.
+- **They do not migrate.** Year round residents across the eastern US. The Christmas card image of a cardinal perched in the snow is accurate. They just sit there through January, bright red against gray, unbothered. Over the last century they have been slowly expanding their range north into southern Canada. Warmer winters and backyard bird feeders have apparently made the commute optional.
+- **They are named after Catholic cardinals.** The clergy, not the baseball team. Early European colonists saw the scarlet feathers and the pointed crest and thought of the red robes and miters of senior Catholic officials, and the name stuck. Linnaeus made it official in 1758.
+- **State bird of seven US states.** More than any other species. Illinois, Indiana, Kentucky, North Carolina, Ohio, Virginia, West Virginia.
 
 ## Setup
 
