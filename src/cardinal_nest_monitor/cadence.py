@@ -145,25 +145,41 @@ async def arm_session_burst_if_absent(
     because it runs on the event loop and the writer connection is
     technically shared with the analyzer's ``record()`` calls in
     combined mode. Read-only access is a better shape here.
+
+    Race-safety (Codex 2026-04-23): the obs-ts probe and the state
+    read happen in ONE compound SELECT. Combined with
+    ``StateStore.record()`` now wrapping its observations-INSERT and
+    state-UPDATE in a single transaction, a reader here will always see
+    EITHER the pre-record snapshot (no fresh observation) OR the
+    post-record snapshot (fresh observation AND matching state). We can
+    never observe the inconsistent middle state (fresh obs row, stale
+    derived state) that used to let this task skip arming in the
+    deploy-during-absence scenario it exists to catch.
     """
     deadline_monotonic = time.monotonic() + max_wait_seconds
     while time.monotonic() < deadline_monotonic:
         try:
+            # Single snapshot: MAX(observations.ts) AND state.in_absence
+            # read together. Under WAL the SELECT captures one consistent
+            # view of the DB regardless of concurrent writers.
             cur = store._ro_conn.execute(
-                "SELECT MAX(ts) AS latest FROM observations"
+                "SELECT "
+                " (SELECT MAX(ts) FROM observations) AS latest_obs_ts, "
+                " in_absence "
+                "FROM state WHERE id = 1"
             )
             row = cur.fetchone()
-            latest = row["latest"] if row is not None else None
         except Exception:
-            log.exception("session-burst arming: observation query failed")
+            log.exception("session-burst arming: observation/state query failed")
             return
+        if row is None:
+            # state row missing (shouldn't happen post-init) — skip.
+            log.warning("session-burst arming: state row missing; skipping")
+            return
+        latest = row["latest_obs_ts"]
+        in_absence_flag = bool(row["in_absence"])
         if latest is not None and float(latest) > startup_wall_ts:
-            try:
-                nest_state = store.get_state()
-            except Exception:
-                log.exception("session-burst arming: state read failed")
-                return
-            if nest_state.in_absence:
+            if in_absence_flag:
                 session_state["until_monotonic"] = (
                     time.monotonic() + settings.burst_duration_seconds
                 )

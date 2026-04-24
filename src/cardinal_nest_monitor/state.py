@@ -583,60 +583,85 @@ class StateStore:
             ):
                 lifecycle_stage = "empty"
 
-        self._conn.execute(
-            "INSERT INTO observations (ts, motion_triggered, prefilter_json, observation_json, evidence_dir) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
-                ts,
-                1 if motion_triggered else 0,
-                prefilter.model_dump_json() if prefilter is not None else None,
-                observation.model_dump_json() if observation is not None else None,
-                evidence_dir,
-            ),
-        )
-        if is_stale:
-            # Observation inserted for history; derived state untouched.
-            log.info(
-                "record: stale snap ts=%.0f (latest=%.0f); skipped derived-state "
-                "update", ts, latest_ts,
+        # Atomicity (Codex 2026-04-23): the observations INSERT and the
+        # derived-state UPDATE must commit together, not as two separate
+        # autocommits. Rationale: the split-process downloader reads
+        # state.sqlite via its own RO connection to make cadence decisions,
+        # and the session-burst arming helper specifically checks
+        # MAX(observations.ts) to detect "analyzer just processed a
+        # post-restart snap" before reading state.in_absence. Without a
+        # transaction, the RO reader can observe the new observation row
+        # while state is still pre-update — making session-burst silently
+        # skip arming in exactly the deploy-during-absence case it exists
+        # to handle. BEGIN IMMEDIATE takes the write lock upfront so we
+        # fail fast on contention rather than mid-transaction.
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute(
+                "INSERT INTO observations (ts, motion_triggered, prefilter_json, observation_json, evidence_dir) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    ts,
+                    1 if motion_triggered else 0,
+                    prefilter.model_dump_json() if prefilter is not None else None,
+                    observation.model_dump_json() if observation is not None else None,
+                    evidence_dir,
+                ),
             )
-            return self._row_to_state(self._load_row())
-        self._conn.execute(
-            "UPDATE state SET "
-            " last_mother_seen_ts = ?, "
-            " last_known_egg_count = ?, "
-            " last_threat_seen_ts = ?, "
-            " last_threat_species = ?, "
-            " in_absence = ?, "
-            " absence_started_ts = ?, "
-            " lifecycle_stage = ?, "
-            " last_chick_count = ?, "
-            " hatch_detected_ts = ?, "
-            " fledge_detected_ts = ?, "
-            " last_feeding_event_ts = ?, "
-            " first_chick_sighting_ts = ?, "
-            " egg_laying_started_ts = ?, "
-            " incubation_started_ts = ?, "
-            " pending_ambiguous_frame_ts = ? "
-            "WHERE id = 1",
-            (
-                last_mother_seen_ts,
-                last_known_egg_count,
-                last_threat_seen_ts,
-                last_threat_species,
-                1 if in_absence else 0,
-                absence_started_ts,
-                lifecycle_stage,
-                last_chick_count,
-                hatch_detected_ts,
-                fledge_detected_ts,
-                last_feeding_event_ts,
-                first_chick_sighting_ts,
-                egg_laying_started_ts,
-                incubation_started_ts,
-                pending_ambiguous_frame_ts,
-            ),
-        )
+            if is_stale:
+                # Observation inserted for history; derived state untouched.
+                # Commit the INSERT so the history row is durable, but no
+                # state UPDATE fires. Readers never see a state that
+                # regressed because of an out-of-order backfill.
+                self._conn.execute("COMMIT")
+                log.info(
+                    "record: stale snap ts=%.0f (latest=%.0f); skipped derived-state "
+                    "update", ts, latest_ts,
+                )
+                return self._row_to_state(self._load_row())
+            self._conn.execute(
+                "UPDATE state SET "
+                " last_mother_seen_ts = ?, "
+                " last_known_egg_count = ?, "
+                " last_threat_seen_ts = ?, "
+                " last_threat_species = ?, "
+                " in_absence = ?, "
+                " absence_started_ts = ?, "
+                " lifecycle_stage = ?, "
+                " last_chick_count = ?, "
+                " hatch_detected_ts = ?, "
+                " fledge_detected_ts = ?, "
+                " last_feeding_event_ts = ?, "
+                " first_chick_sighting_ts = ?, "
+                " egg_laying_started_ts = ?, "
+                " incubation_started_ts = ?, "
+                " pending_ambiguous_frame_ts = ? "
+                "WHERE id = 1",
+                (
+                    last_mother_seen_ts,
+                    last_known_egg_count,
+                    last_threat_seen_ts,
+                    last_threat_species,
+                    1 if in_absence else 0,
+                    absence_started_ts,
+                    lifecycle_stage,
+                    last_chick_count,
+                    hatch_detected_ts,
+                    fledge_detected_ts,
+                    last_feeding_event_ts,
+                    first_chick_sighting_ts,
+                    egg_laying_started_ts,
+                    incubation_started_ts,
+                    pending_ambiguous_frame_ts,
+                ),
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            try:
+                self._conn.execute("ROLLBACK")
+            except Exception:
+                log.exception("record: rollback also failed (transaction state unclear)")
+            raise
         return self._row_to_state(self._load_row())
 
     # ── Alert recording + cooldown queries ─────────────────────────────
@@ -647,28 +672,43 @@ class StateStore:
         evidence_dir: str | None,
     ) -> None:
         species_str = ",".join(decision.species) if decision.species else None
-        self._conn.execute(
-            "INSERT INTO alerts (ts, severity, rule_id, species, title, summary, evidence_dir) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                ts,
-                decision.severity.value,
-                decision.rule_id,
-                species_str,
-                decision.title,
-                decision.summary,
-                evidence_dir,
-            ),
-        )
-        self._conn.execute(
-            "UPDATE state SET last_alert_severity = ? WHERE id = 1",
-            (decision.severity.value,),
-        )
-        if decision.rule_id == "mother_returned":
+        # Same transaction discipline as record(): the alerts INSERT and the
+        # paired state UPDATE(s) must commit atomically, so a cross-process
+        # RO reader querying MAX(alerts.ts) + last_alert_severity together
+        # can never see the alert row without the state fields it implies.
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
             self._conn.execute(
-                "UPDATE state SET last_absence_alert_ts = ? WHERE id = 1",
-                (ts,),
+                "INSERT INTO alerts (ts, severity, rule_id, species, title, summary, evidence_dir) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    ts,
+                    decision.severity.value,
+                    decision.rule_id,
+                    species_str,
+                    decision.title,
+                    decision.summary,
+                    evidence_dir,
+                ),
             )
+            self._conn.execute(
+                "UPDATE state SET last_alert_severity = ? WHERE id = 1",
+                (decision.severity.value,),
+            )
+            if decision.rule_id == "mother_returned":
+                self._conn.execute(
+                    "UPDATE state SET last_absence_alert_ts = ? WHERE id = 1",
+                    (ts,),
+                )
+            self._conn.execute("COMMIT")
+        except Exception:
+            try:
+                self._conn.execute("ROLLBACK")
+            except Exception:
+                log.exception(
+                    "record_alert: rollback also failed (transaction state unclear)"
+                )
+            raise
         log.info(
             "recorded alert: %s / %s / %s",
             decision.severity.value, decision.rule_id, decision.species,
