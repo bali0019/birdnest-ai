@@ -11,6 +11,15 @@
 - **Apr 25 – 27** — Hatch (expected)
 - **May 5 – 7** — Fledge (expected)
 
+## Crazy-but-true things about this bird
+
+A few facts that came up while I was researching this project and refused to stop surprising me:
+
+- **Female cardinals sing.** In almost every other songbird species in North America, only males sing — the male-sings-to-attract-a-mate pattern is so universal it was assumed to be a rule. Northern Cardinals break it. The female sings from the nest while incubating, and ornithologists think she's telling the male what food to bring her.
+- **His red color comes from what he eats, not his genes.** Cardinal red is carotenoids, absorbed from berries and fruits. A poorly-fed male turns orange, or even yellow. The intensity of his plumage is, functionally, a public nutrition report that the female reads before deciding whether to mate with him.
+- **Males attack their own reflections.** Car side mirrors, windows, shiny bumpers — a territorial male cardinal sees a "rival" that refuses to leave and will hurl himself at it for weeks on end. If you have cardinals in your yard long enough, you will eventually witness a very small, very angry bird losing a grudge match with a Toyota.
+- **They don't migrate.** Year-round residents across the eastern US. The Christmas-card image of a cardinal perched in the snow is accurate — they just sit there through January, bright red against gray, unbothered.
+
 ![Brown Thrasher stealing an egg from the cardinal nest](evidence/reference/thrasher_stealing_egg_highlighted.gif)
 
 The female cardinal chose the rose bush by the back door. It was a terrible location, strategically speaking: low to the ground, close to foot traffic, visible from the kitchen window. But she was not consulting anyone. She built the nest in three days, a tight cup of twigs and grass wedged into the thorns, and by the second week of April there were eggs in it.
