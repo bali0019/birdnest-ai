@@ -39,3 +39,8 @@ dist/
 .DS_Store
 *.swp
 *.swo
+
+# Codex per-project memory file. Parallel to CLAUDE.md (which IS tracked)
+# but intentionally kept local — AGENTS.md contains Codex's own notes and
+# shouldn't be committed.
+AGENTS.md
