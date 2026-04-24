@@ -4,6 +4,8 @@
 > ### 🥚 Nest Status: **Eggs incubating**
 > Mom is on the nest. System is watching 24/7. *I'll update this page as they hatch and fledge.*
 
+---
+
 ## Timeline
 
 - **Apr 13** — Egg laying begins
@@ -11,9 +13,13 @@
 - **Apr 25 – 27** — Hatch (expected)
 - **May 5 – 7** — Fledge (expected)
 
+---
+
 ![Brown Thrasher stealing an egg from the cardinal nest](evidence/reference/thrasher_stealing_egg_highlighted.gif)
 
 *The attack that started this project. A Brown Thrasher at the cardinal's nest, four seconds from rim to gone with an egg in its beak.*
+
+---
 
 The female cardinal chose the rose bush by the back door. It was a terrible location, strategically speaking: low to the ground, close to foot traffic, visible from the kitchen window. But she was not consulting anyone. She built the nest in three days, a tight cup of twigs and grass wedged into the thorns, and by the second week of April there were eggs in it.
 
@@ -34,6 +40,8 @@ The system did not know this. It fired absence alerts all night, every night, fo
 So I taught it what a cardinal's spring actually looks like. The system now tracks six stages, from nest building through laying and incubation and feeding all the way to the day the chicks fledge. The stage that mattered most was the laying one. Once the system knows she is still laying, it understands that an empty cup at three in the morning is the female cardinal doing exactly what she is supposed to be doing, and it stops paging me about it.
 
 The status badge at the top of this page updates as she moves through these stages.
+
+---
 
 ## What the system sees
 
@@ -59,6 +67,8 @@ Most of the time, the answer is boring.
 
 *The nest is empty. She left to forage, probably. The system tightens the snap cadence from every five minutes to every sixty seconds. This is the predation risk window. If a threat shows up during this window, the alert fires instantly. If nothing happens but she's still gone after five minutes, a MEDIUM alert lets me know.*
 
+---
+
 ## What happens when something goes wrong
 
 | Level | What the system saw | What I should do |
@@ -67,6 +77,8 @@ Most of the time, the answer is boring.
 | **HIGH** | A thrasher, blue jay, or squirrel near the nest | Pull up the camera. Decide whether to go outside. |
 | **MEDIUM** | The cardinal has been gone for five minutes or more | Probably fine. Probably. The system is watching closer now. |
 | **LOW** | She came back | Stand down. |
+
+---
 
 ## How it works
 
@@ -155,6 +167,8 @@ The female cardinal and the Brown Thrasher are both brownish birds. The analyzer
 | **#nest-backfill** | Alerts from analyzer downtime, tagged `[BACKFILL +Nm]`. Keeps #alerts clean |
 | **#cardinal-lifecycle-changes** | Stage transitions only: laying begins, incubation begins, hatch, fledge. Celebration only, never an alarm |
 
+---
+
 ## By the numbers
 
 | | |
@@ -170,6 +184,8 @@ The female cardinal and the Brown Thrasher are both brownish birds. The analyzer
 | Models that know the cardinal exists | 2 |
 | Cardinals that know the models exist | 0 |
 
+---
+
 ## A few things about the cardinal
 
 Things that came up while I was researching this project and refused to stop surprising me. All grounded in ornithology, not folklore.
@@ -183,6 +199,8 @@ Things that came up while I was researching this project and refused to stop sur
 - **They do not migrate.** Year round residents across the eastern US. The Christmas card image of a cardinal perched in the snow is accurate. They just sit there through January, bright red against gray, unbothered. Over the last century they have been slowly expanding their range north into southern Canada. Warmer winters and backyard bird feeders have apparently made the commute optional.
 - **They are named after Catholic cardinals.** The clergy, not the baseball team. Early European colonists saw the scarlet feathers and the pointed crest and thought of the red robes and miters of senior Catholic officials, and the name stuck. Linnaeus made it official in 1758.
 - **State bird of seven US states.** More than any other species. Illinois, Indiana, Kentucky, North Carolina, Ohio, Virginia, West Virginia.
+
+---
 
 ## Setup
 
@@ -243,6 +261,8 @@ TEST_MODE=true python -m pytest tests/ -v
 # 192 tests. All must pass before deploying any change.
 ```
 
+---
+
 ## Running it locally
 
 The two LaunchAgent services are the production deploy. For development you can run the same code in the foreground:
@@ -259,6 +279,8 @@ python -m cardinal_nest_monitor --role analyzer     # in another
 ```
 
 Ctrl+C shuts down cleanly. The downloader will keep writing to the spool, the analyzer will keep draining it; they coordinate through `data/state.sqlite` in WAL mode.
+
+---
 
 ## Useful commands
 
@@ -285,6 +307,8 @@ python -m cardinal_nest_monitor.tools.lifecycle_backfill --auto
 python -m cardinal_nest_monitor.tools.lifecycle_regression
 ```
 
+---
+
 ## Testing safely
 
 The integration suite posts real Discord embeds. To keep the live alert channels clean during test runs, route every test post to a dedicated test channel:
@@ -298,6 +322,8 @@ TEST_MODE=true python -m pytest tests/ -v
 ```
 
 When `TEST_MODE=true`, the autouse fixture in `tests/integration/conftest.py` rewrites `discord_webhook_url`, `discord_feed_webhook_url`, and `discord_analytics_webhook_url` to point at the test webhook for the duration of every test. Every test embed is also prefixed with `[TEST]` and footed with the run timestamp so it's visually distinct in Discord. If `DISCORD_TEST_WEBHOOK_URL` is unset, the integration tests fail with a clear error rather than risk leaking into production channels.
+
+---
 
 ## Logs and operations
 
@@ -319,6 +345,8 @@ sqlite3 data/state.sqlite "SELECT * FROM state WHERE id = 1;"
 sqlite3 data/state.sqlite "SELECT ts, severity, rule_id, species, title FROM alerts ORDER BY ts DESC LIMIT 10;"
 ```
 
+---
+
 ## Config that matters
 
 Most of the `.env` is set-and-forget. The handful that change the shape of the system:
@@ -339,9 +367,13 @@ See [`.env.example`](./.env.example) for the full list with documentation.
 
 **Reproducible installs.** For CI or production deploys, `pip install -r requirements.lock` pins every transitive dependency to the exact version in the committed lockfile. For dev work, `pip install -e .[dev]` is still the path — see CLAUDE.md §30 for the rotation cadence.
 
+---
+
 ## Tech stack
 
 Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos, on five separate channels. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. 192 tests in pytest, including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
+
+---
 
 ## Project structure
 
