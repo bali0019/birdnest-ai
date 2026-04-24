@@ -6,18 +6,9 @@
 
 ## Timeline
 
-What the cardinal has been doing since monitoring began. Days with nothing new are grouped.
-
-| Date | Lifecycle | The day |
-|---|---|---|
-| Sun, Apr 13 | Egg laying | Camera came online mid-day. Mom drops in, lays an egg, leaves. The cup is empty for hours at a stretch — which, when you don't yet know what egg laying looks like, is terrifying. I stayed up late watching the log. |
-| Mon, Apr 14 | **Incubation begins 05:48 EDT** | The 24-hour sitting ratio crosses 70 % for the first time. The system auto-flips the stage from "laying" to "incubating." Mom has finished putting eggs in the cup and has settled in to sit on them for the next twelve days. Nineteen MEDIUM alerts fired overnight from the tail of the laying phase — each one a confident claim that she was AWOL. She was not. I added an `egg_laying` stage to the state machine that afternoon so the system would stop saying it. |
-| Tue, Apr 15 | Incubation | A CRITICAL fires at 12:26 claiming a Brown Thrasher is at the nest. It is, in fact, mom. She has been in the same spot for an hour. The system has invented a predator. I spend the afternoon rewriting the analyzer's prompt to actually teach it the difference between a female cardinal (red crest, stubby orange beak, ~21 cm) and a Brown Thrasher (no crest, long tail, yellow eye, ~28 cm). I also add a second-opinion pass from Opus that reviews every CRITICAL and HIGH alert cold, with no knowledge of what the first model said. Nothing fires now unless both models agree. |
-| Wed, Apr 16 | Incubation | First quiet day. Thirty-one MEDIUMs, all real — mom taking five-to-fifteen minute foraging trips that the system correctly noticed but did not panic about. Shipped multi-image analysis (three crops per snap instead of one, for better recall on subtle thrasher features), upgraded the verifier to Opus 4.7, and added a tight 30-second "burst" cadence for the first three minutes after she leaves the nest, when the risk of a thrasher moving in is highest. |
-| Thu, Apr 17 | Incubation | Bad day. Two false alarms in thirty minutes — a CRITICAL at 15:17 saying an egg was missing (no egg was missing; the camera cannot see into the cup from this angle) and a HIGH at 14:56 saying an unknown bird was at the nest (it was mom, sitting low with her crest flat). By bedtime I had shipped three fixes: turned egg counting off entirely, added a "clearly a bird in the cup but I can't tell you which one" soft-presence path so those frames stop driving alerts, and tripled the confidence threshold for the system to call something a chick. Seven false alerts eliminated going forward; zero real events suppressed. |
-| Fri, Apr 18 | Incubation | No false alarms. No real ones either. Spent the day locking the system down against every sort of local-machine mischief I could think of: webhook URLs validated at load, JPEG uploads capped at 20 MB before decode, Blink's 2FA PIN file given strict owner-only mode and lstat checks, the spool directory refusing to follow symlinks, the launchd plists forcing 0600 on everything they write. |
-| Sat, Apr 19 – Tue, Apr 22 | Incubation | Four days in a row of boring, which is the outcome this whole project was built for. Mom left the nest, mom came back. Mom left, mom came back. The camera caught every cycle. Nobody needed to panic about anything. On-nest ratio steady at 65–73 %. |
-| Thu, Apr 23 (today) | Incubation · Day ~10 of ~12 | I noticed the 30-second burst cadence I shipped on April 16 had been silently dead the entire time. A subtle bug meant the camera would commit to a five-minute wait right before mom left the nest — so the tight burst cadence, which exists specifically to catch four-second thrasher raids, never actually got a chance to fire. Fixed it, and added a restart-local catch-up timer so a deploy mid-absence doesn't leave a gap. If the weather cooperates, eggs should start hatching in a couple of days. |
+- **Apr 13** — Egg laying
+- **Apr 14 – 23** — Incubation (currently day ~10 of ~12)
+- **Apr 25 – 27** — Expected hatch
 
 ![Brown Thrasher stealing an egg from the cardinal nest](evidence/reference/thrasher_stealing_egg_highlighted.gif)
 
