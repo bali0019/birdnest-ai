@@ -89,7 +89,14 @@ class Settings(BaseSettings):
     blink_username: str = Field("")
     blink_password: str = Field("")
     blink_camera_name: str = Field("")
-    blink_creds_path: Path = Field(Path("./blink_credentials.json"))
+    # ISOLATION NOTE (generic-nest-monitor branch, 2026-04-23):
+    # Defaults to a separate creds file so the generic service never races
+    # the production cardinal service for Blink auth. The cardinal branch on
+    # main uses `./blink_credentials.json`; this branch uses the `_generic`
+    # variant. If you intentionally want to share a single file (e.g. two
+    # cameras, same Blink account), override via `.env`. See BRANCH_NOTES.md
+    # for the hard rule about concurrent downloader runtime.
+    blink_creds_path: Path = Field(Path("./blink_credentials_generic.json"))
 
     # ── Cadence ─────────────────────────────────────────────────────────
     snap_interval_seconds: int = Field(300, ge=10, le=600)

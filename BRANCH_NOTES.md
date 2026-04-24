@@ -14,9 +14,32 @@ This is a **separate deployment branch** for the species-profile-driven refactor
 | LaunchAgent labels | `com.cardinalnest.downloader` / `.analyzer` | `com.cardinalnest.downloader.generic` / `.analyzer.generic` |
 | LaunchAgent plists | `launchd/*.plist` | `launchd/generic/*.plist` |
 | Log files | `~/Library/Logs/cardinal-nest-monitor/{downloader,analyzer}.{out,err}.log` | `~/Library/Logs/cardinal-nest-monitor/{downloader,analyzer}.generic.{out,err}.log` |
-| Blink credentials | `./blink_credentials.json` | `./blink_credentials.json` — shared, same file |
+| Blink credentials | `./blink_credentials.json` | `./blink_credentials_generic.json` — separate file |
 
-The cardinal deployment on `main` MUST remain untouched while this branch evolves. No path, DB, or label on this branch points at the live cardinal service's state.
+The cardinal deployment on `main` MUST remain untouched while this branch evolves. No path, DB, label, OR credentials file on this branch points at the live cardinal service's state.
+
+## Hard operational rule: never run two downloaders against the same Blink camera/account at once
+
+This is a **runtime rule, not a filesystem rule.** The path-isolation table above prevents filesystem races, but it does NOT prevent two `snap_loop` instances from hammering the same Blink camera through the same account. That produces:
+
+- double the Blink API request rate, which can trigger 429 throttling or account lockouts
+- two separate authentication sessions consuming `client_id` slots (~10 per account — these burn easily)
+- inconsistent snap cadences as both services compete for camera attention
+- double the battery drain
+
+**When the generic service is pointed at the SAME Blink account/camera as the production cardinal service, validation is limited to:**
+
+- offline analyzer-only work (dryrun against saved JPEGs)
+- parsing/rendering tests (profile loading, tool schema generation, prompt rendering)
+- integration tests against the mocked analyzer
+
+**Running a live Blink-facing downloader on this branch requires one of:**
+
+- stopping the production `com.cardinalnest.downloader` service first, OR
+- using a different Blink account / different camera, OR
+- a dedicated test Blink account with its own camera
+
+Do not skip this. Two downloaders against the same camera is a production incident.
 
 ## Refactor scope
 
