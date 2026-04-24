@@ -4,6 +4,21 @@
 > ### 🥚 Nest Status: **Eggs incubating**
 > Mom is on the nest. System is watching 24/7. *I'll update this page as they hatch and fledge.*
 
+## Timeline
+
+What the cardinal has been doing since monitoring began. Days are grouped when nothing much changed.
+
+| Date | Lifecycle stage | What mom did | Notable events |
+|---|---|---|---|
+| Sun, Apr 13 | Egg laying (in progress) | Monitoring came online mid-day. Brief nest visits between laying trips — the cup was empty for hours at a stretch. | First deploy. Panic-mode false alerts about mom "abandoning" the nest (she was still laying, not incubating yet). |
+| Mon, Apr 14 | **Incubation begins 05:48 EDT** | Transition day: the 24 h sitting ratio crossed 70 % for the first time and the system auto-advanced to the incubation stage. | 19 MEDIUM long-absence alerts fired overnight from the tail of the laying phase — drove the addition of the `egg_laying` lifecycle stage to suppress them. |
+| Tue, Apr 15 | Incubation | Steady sitting, ~5–15 min foraging trips. | 1 CRITICAL (**false** — cardinal misidentified as thrasher at 12:26) and 1 HIGH (ambiguous predator 23:39). Same-day rewrite of the analyzer species-ID prompt + introduced Opus verification second-opinion on CRITICAL/HIGH. |
+| Wed, Apr 16 | Incubation | Normal. Multi-image analysis (3 crops per snap) + Opus 4.7 upgrade + burst-cadence config landed. | 0 CRITICAL/HIGH. 31 MEDIUM absence alerts during real foraging trips. |
+| Thu, Apr 17 | Incubation | Crest-hidden camera angle produced "bird in cup but can't confirm species" frames. | 1 CRITICAL (**false** egg-count miscount, 15:17) + 1 HIGH (**false** unknown-bird, 14:56). Hotfix same day: `ENABLE_EGG_COUNT_ALERTS=false` + ambiguous-occupied-cup soft-presence path + chick confidence floor raised to 0.75. 7 false alerts eliminated going forward. |
+| Fri, Apr 18 | Incubation | Routine day, ~310 snaps processed. | 0 CRITICAL/HIGH. 23 MEDIUM. Security-hardening pass (Discord webhook URL validator, JPEG size cap, Blink PIN file lockdown, spool symlink rejection, launchd Umask 077). |
+| Sat, Apr 19 – Tue, Apr 22 | Incubation | Settled routine: 3–5 foraging trips per day (5–15 min each), sustained sitting otherwise, overnight quiet. On-nest ratio stayed roughly 65–73 %. | MEDIUM-only alerts (real foraging, not false positives). 0 CRITICAL/HIGH for four consecutive days. |
+| Thu, Apr 23 (today) | Incubation · Day ~10 of ~12 | Normal daytime. Mom still covering eggs. | 17 MEDIUM, 7 LOW. 0 CRITICAL/HIGH. Deployed burst-cadence mid-wait fix + restart-local session-burst catch-up (CLAUDE.md §21). Hatch expected Apr 25–27. |
+
 ![Brown Thrasher stealing an egg from the cardinal nest](evidence/reference/thrasher_stealing_egg_highlighted.gif)
 
 The female cardinal chose the rose bush by the back door. It was a terrible location, strategically speaking: low to the ground, close to foot traffic, visible from the kitchen window. But she was not consulting anyone. She built the nest in three days, a tight cup of twigs and grass wedged into the thorns, and by the second week of April there were eggs in it.
