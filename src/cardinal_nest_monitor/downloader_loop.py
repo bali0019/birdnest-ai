@@ -56,7 +56,10 @@ from cardinal_nest_monitor.blink_client import (
     motion_loop,
     snap_loop,
 )
-from cardinal_nest_monitor.cadence import compute_snap_interval
+from cardinal_nest_monitor.cadence import (
+    arm_session_burst_if_absent,
+    compute_snap_interval,
+)
 from cardinal_nest_monitor.config import get_settings
 from cardinal_nest_monitor.notifier import Notifier
 from cardinal_nest_monitor.state import StateStore
@@ -268,6 +271,12 @@ async def run_downloader_service() -> int:
     # cycle before it waits for the next tick.
     _last_interval_logged: dict[str, int] = {"value": 0}
 
+    # Session-burst state — populated by arm_session_burst_if_absent when a
+    # post-restart snap confirms in_absence=True. See CLAUDE.md §21 for
+    # the rationale (evidence-gated restart-local burst, distinct from the
+    # calendar-anchored burst tied to absence_started_ts).
+    _session_burst_state: dict[str, float | None] = {"until_monotonic": None}
+
     def get_interval() -> int:
         now_ts = time.time()
         # Quiet hours win regardless of state freshness. Short-circuit
@@ -298,8 +307,25 @@ async def run_downloader_service() -> int:
                     interval = settings.snap_interval_seconds
                     label = "default"
                 else:
+                    # Clear session-burst on mom-return — a subsequent
+                    # absence should use calendar-anchored burst with the
+                    # NEW absence_started_ts, not this stale session
+                    # window. Keeps arming strictly one-shot per absence
+                    # that was active at startup.
+                    if (
+                        not state.in_absence
+                        and _session_burst_state["until_monotonic"] is not None
+                    ):
+                        log.info(
+                            "session-burst cleared (mom back on nest)"
+                        )
+                        _session_burst_state["until_monotonic"] = None
                     interval, label = compute_snap_interval(
-                        settings, state, now_ts
+                        settings, state, now_ts,
+                        session_burst_until_monotonic=(
+                            _session_burst_state["until_monotonic"]
+                        ),
+                        now_monotonic=time.monotonic(),
                     )
         if _last_interval_logged["value"] != interval:
             log.info(
@@ -338,6 +364,12 @@ async def run_downloader_service() -> int:
 
     snap_now = asyncio.Event()
 
+    # Captured BEFORE snap_loop is launched so the first post-startup snap's
+    # observation.ts is guaranteed > startup_wall_ts. Consumed by the
+    # session-burst arming task to gate the restart-local burst window on
+    # a fresh observation (CLAUDE.md §21).
+    startup_wall_ts = time.time()
+
     tasks = [
         asyncio.create_task(
             motion_loop(blink, snap_now, _on_clip), name="motion_loop"
@@ -348,6 +380,12 @@ async def run_downloader_service() -> int:
         asyncio.create_task(
             _downloader_watchdog(last_spool_write_ts, notifier),
             name="downloader_watchdog",
+        ),
+        asyncio.create_task(
+            arm_session_burst_if_absent(
+                store, settings, startup_wall_ts, _session_burst_state,
+            ),
+            name="session_burst_arming",
         ),
     ]
 

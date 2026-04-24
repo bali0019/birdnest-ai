@@ -23,7 +23,10 @@ from typing import Any
 
 from cardinal_nest_monitor import analyzer as analyzer_mod
 from cardinal_nest_monitor import verifier as verifier_mod
-from cardinal_nest_monitor.cadence import compute_snap_interval
+from cardinal_nest_monitor.cadence import (
+    arm_session_burst_if_absent,
+    compute_snap_interval,
+)
 from cardinal_nest_monitor.blink_client import (
     _sanitize_clip_timestamp,
     connect,
@@ -684,12 +687,17 @@ async def run_combined() -> int:
     # Pattern A — absence-aware dynamic cadence.
     # Computed every time snap_loop is about to wait for the next tick.
     # Precedence (shared with downloader via cadence.compute_snap_interval):
-    #   quiet > burst > absence > default.
+    #   quiet > session-burst > burst > absence > default.
     # PARITY FIX: prior to 2026-04-23 this branched only on quiet / absence /
     # default and never checked burst_duration_seconds — combined-mode
     # snap_loop never actually engaged the §21 burst cadence. Routing through
     # the shared helper keeps split and combined modes in lock-step.
     _last_interval_logged: dict[str, int] = {"value": 0}
+
+    # Session-burst: restart-local evidence-gated burst window. Armed by
+    # arm_session_burst_if_absent after the first post-startup snap confirms
+    # in_absence=True. See CLAUDE.md §21.
+    _session_burst_state: dict[str, float | None] = {"until_monotonic": None}
 
     def get_interval() -> int:
         now_ts = time.time()
@@ -700,7 +708,22 @@ async def run_combined() -> int:
             interval = settings.snap_interval_seconds
             label = "default"
         else:
-            interval, label = compute_snap_interval(settings, state, now_ts)
+            # Clear session-burst on mom-return so a subsequent absence uses
+            # the calendar-anchored burst with its fresh absence_started_ts,
+            # not a stale restart window.
+            if (
+                not state.in_absence
+                and _session_burst_state["until_monotonic"] is not None
+            ):
+                log.info("session-burst cleared (mom back on nest)")
+                _session_burst_state["until_monotonic"] = None
+            interval, label = compute_snap_interval(
+                settings, state, now_ts,
+                session_burst_until_monotonic=(
+                    _session_burst_state["until_monotonic"]
+                ),
+                now_monotonic=time.monotonic(),
+            )
         if _last_interval_logged["value"] != interval:
             log.info(
                 "cadence: %ds → %ds (%s)",
@@ -727,6 +750,12 @@ async def run_combined() -> int:
         except Exception:
             log.exception("on_clip failed")
 
+    # Captured BEFORE snap_loop is launched so the first post-startup snap's
+    # observation.ts is guaranteed > startup_wall_ts. Consumed by the
+    # session-burst arming task to gate the restart-local burst window on
+    # a fresh observation (CLAUDE.md §21).
+    startup_wall_ts = time.time()
+
     tasks = [
         asyncio.create_task(motion_loop(blink, snap_now, _on_clip), name="motion_loop"),
         asyncio.create_task(
@@ -741,6 +770,12 @@ async def run_combined() -> int:
         ),
         asyncio.create_task(
             watchdog_scheduler(pipeline, notifier), name="watchdog"
+        ),
+        asyncio.create_task(
+            arm_session_burst_if_absent(
+                store, settings, startup_wall_ts, _session_burst_state,
+            ),
+            name="session_burst_arming",
         ),
     ]
     if feed_notifier is not None and feed_queue is not None:
