@@ -424,8 +424,15 @@ After the 3-hour outage, the user mandated a full integration test suite that mu
 ```bash
 # From repo root:
 source venv/bin/activate
-TEST_MODE=true python -m pytest tests/ tests/integration/ -v
+
+# Full suite (~12s; run before every commit):
+TEST_MODE=true python -m pytest tests/ -q
+
+# Fast lane — unit only, ~2s (good for tight dev loops during a feature):
+TEST_MODE=true python -m pytest tests/ --ignore=tests/integration -q
 ```
+
+**Dev-loop shape (2026-04-23).** After fixing the 60 s hang-resilience test to use a shared patchable `analyzer_mod.HARD_TIMEOUT_SECONDS` constant, the full suite dropped from 75 s to 12 s. **Do not attempt to speed this up further with `pytest-xdist`** — I tried. xdist made the FULL suite slower (11.5 s → 22 s) because the integration suite posts real messages to one Discord test webhook, which has a 30 msg / 60 s rate limit; parallel workers hit 429s and Retry-After backoff wins against any concurrency gain. xdist was also net-negative on the unit-only suite (2.0 s serial → 2.3 s with 8 workers) because worker startup swamps any parallelism benefit at that scale. The cheapest dev-loop optimization is `--ignore=tests/integration` for the fast lane, not parallelism.
 
 **CRITICAL RULE — load-bearing:** Before committing any change that touches `analyzer.py`, `events.py`, `main.py`, `blink_client.py`, `notifier.py`, or `verifier.py`, run `python -m pytest tests/ tests/integration/ -v`. If any test fails, **do not deploy**. Fix the test or revert. This is not a suggestion — it is a direct response to the 2026-04-15 outage. No exceptions, no "I'll run it next time," no "the change is small." The integration suite exists precisely to catch the kind of subtle async deadlock that silent-failed for 3 hours.
 

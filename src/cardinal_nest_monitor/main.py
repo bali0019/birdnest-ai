@@ -146,11 +146,17 @@ class Pipeline:
 
         obs: NestObservation | None = None
         try:
-            # Outer 60s timeout is belt-and-suspenders — analyzer.analyze()
-            # already has an inner `asyncio.wait_for(..., 60)` around the
-            # HTTP call, but this protects the caller from any future
-            # unbounded awaits added to analyze() (e.g. a new retry loop).
-            obs = await asyncio.wait_for(analyzer_mod.analyze(jpeg), timeout=60)
+            # Outer budget is belt-and-suspenders — analyzer.analyze()
+            # already has an inner wait_for around the HTTP call, but this
+            # protects the caller from any future unbounded awaits added
+            # to analyze() (e.g. a new retry loop). Both inner and outer
+            # bounds reference analyzer_mod.HARD_TIMEOUT_SECONDS so they
+            # shrink together when tests patch the constant — see CLAUDE
+            # md §19 for the timeout contract.
+            obs = await asyncio.wait_for(
+                analyzer_mod.analyze(jpeg),
+                timeout=analyzer_mod.HARD_TIMEOUT_SECONDS,
+            )
         except asyncio.TimeoutError:
             log.warning(
                 "analyzer timed out after 60s; no observation for this snap",

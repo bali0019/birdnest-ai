@@ -54,19 +54,30 @@ async def test_analyzer_timeout_does_not_hang(
     monkeypatch, store, evidence, notifier, reference_jpeg_bytes,
 ):
     """A hung analyzer must NOT block on_image beyond the analyzer's
-    internal 60s hard-bound + a few seconds of slack.
+    hard-bound + a few seconds of slack.
 
     Strategy:
-      - Patch analyzer.analyze to a coroutine that sleeps 120s.
-      - Call pipeline.on_image with an overall asyncio.wait_for bound of 65s.
-      - Expect: on_image returns within 65s (i.e. no TimeoutError raised),
-        and no alert is sent (analyzer failed → decision is None).
+      - Patch ``analyzer_mod.HARD_TIMEOUT_SECONDS`` to 1 s so BOTH the
+        outer ``main.py::Pipeline.on_image`` wait_for AND the inner
+        ``analyzer.py::analyze`` wait_for shrink together. (Both read
+        the constant at call time, not at import time.)
+      - Patch ``analyzer.analyze`` to a coroutine that sleeps 5 s — well
+        past the 1 s bound but short enough that the test can't be
+        catastrophically slow if the bound breaks.
+      - Expect: on_image returns within 2 s and no alert is sent.
+
+    Before 2026-04-23 this test slept 120 s to hit the real 60 s
+    timeout, making it dominate the test suite at 60 s of every run.
+    The shared-constant refactor let the test exercise the SAME
+    contract in under 2 s. The production default (60 s, see CLAUDE.md
+    §19) is still the number that ships.
     """
+    # Shrink both the inner analyzer wait_for AND main.py's outer bound
+    # together via the shared constant.
+    monkeypatch.setattr(analyzer_mod, "HARD_TIMEOUT_SECONDS", 1.0)
+
     async def slow_analyze(*args, **kwargs):
-        await asyncio.sleep(120)
-        # Unreachable in practice — the analyzer's internal 60s bound
-        # should fire first. But keep a return path so the signature is
-        # well-formed.
+        await asyncio.sleep(5)  # well past the 1 s bound; unreachable return
         from cardinal_nest_monitor.schema import NestObservation
         return NestObservation(
             mother_cardinal_present="uncertain",
@@ -97,21 +108,21 @@ async def test_analyzer_timeout_does_not_hang(
     try:
         await asyncio.wait_for(
             pipeline.on_image(reference_jpeg_bytes, meta),
-            timeout=65,
+            timeout=3,
         )
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - start
         pytest.fail(
-            f"pipeline.on_image did not return within 65s (elapsed={elapsed:.1f}s). "
-            "The analyzer's internal 60s timeout is missing or broken; a hung "
-            "analyzer WILL hang the service."
+            f"pipeline.on_image did not return within 3s (elapsed={elapsed:.1f}s). "
+            "The analyzer's HARD_TIMEOUT_SECONDS bound is missing or broken; a "
+            "hung analyzer WILL hang the service."
         )
     elapsed = time.monotonic() - start
 
-    # on_image must have returned within ~60-63s (the analyzer catches
+    # on_image must have returned within ~1-2s (the analyzer catches
     # asyncio.TimeoutError internally and the pipeline falls through with
     # no observation → no alert).
-    assert elapsed < 65, f"on_image took {elapsed:.1f}s, expected < 65s"
+    assert elapsed < 3, f"on_image took {elapsed:.1f}s, expected < 3s"
     assert send_alert_mock.await_count == 0, (
         "No alert should be sent when the analyzer timed out"
     )

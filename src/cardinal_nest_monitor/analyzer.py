@@ -19,6 +19,20 @@ from cardinal_nest_monitor.schema import NEST_TOOL, NestObservation
 log = logging.getLogger(__name__)
 
 
+# Hard outer bound on the Anthropic HTTP call. Load-bearing — this is
+# the floor that prevented the 2026-04-15 outage from becoming an 8-hour
+# one. Tuned to p99 × 3: normal analyze() is 2–6s, heavy load 15–30s,
+# 60s is plenty. See CLAUDE.md §19 for the full timeout budget table.
+#
+# Exported (not module-private) so tests can monkeypatch it to run the
+# hard-timeout regression guard in ~1s instead of ~60s. Both the inner
+# wait_for below AND main.py's outer wait_for around analyze() reference
+# this constant so they shrink together — a test can never leave the
+# outer bound at 60s while the inner is at 1s (or vice-versa), which
+# would make the race different from production.
+HARD_TIMEOUT_SECONDS: float = 60.0
+
+
 _SYSTEM_PROMPT = """You are analyzing images of a Northern Cardinal nest in a backyard rose bush in Marietta, Georgia. The nest is low to the ground in dense foliage near a back door. A Brown Thrasher has previously attacked this nest and stolen at least one egg — threat detection is life-or-death for the chicks.
 
 == Your job ==
@@ -255,9 +269,10 @@ async def analyze(
         try:
             # Hard outer bound on the HTTP call — the SDK's internal timeout
             # has failed us under odd network conditions in the past (hung
-            # forever). 60s is plenty: normal latency is 2–6s, heavy load
-            # 15–30s. If we hit this, raise asyncio.TimeoutError to the
-            # caller, which catches and falls back gracefully.
+            # forever). HARD_TIMEOUT_SECONDS (module-level) is the shared
+            # budget used by both this inner bound AND main.py's outer
+            # bound around analyze(); tests patch the constant so both
+            # shrink together. See CLAUDE.md §19.
             response = await asyncio.wait_for(
                 client.messages.create(
                     model=model,
@@ -267,7 +282,7 @@ async def analyze(
                     tool_choice={"type": "tool", "name": "report_nest"},
                     messages=messages,
                 ),
-                timeout=60,
+                timeout=HARD_TIMEOUT_SECONDS,
             )
             break
         except asyncio.TimeoutError:
