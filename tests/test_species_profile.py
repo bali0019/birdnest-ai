@@ -18,16 +18,20 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from species import (
+from cardinal_nest_monitor.species import (
     SpeciesProfile,
+    builtin_profile_path,
     clear_species_profile_cache,
     get_species_profile,
     load_species_profile,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-CARDINAL_PATH = REPO_ROOT / "species" / "northern_cardinal.toml"
-ROBIN_PATH = REPO_ROOT / "species" / "american_robin.toml"
+# Profiles are resolved via the installed-package helper so the tests
+# work regardless of cwd (editable install or wheel install — both
+# supported). Hard-coded paths relative to the repo root would break the
+# moment someone runs pytest from a different directory.
+CARDINAL_PATH = builtin_profile_path("northern_cardinal")
+ROBIN_PATH = builtin_profile_path("american_robin")
 
 
 # ── Happy path: both shipped profiles load cleanly ─────────────────────

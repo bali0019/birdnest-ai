@@ -18,6 +18,22 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _HOURS_RE = re.compile(r"^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$")
 
 
+def _default_species_profile_path() -> Path:
+    """Resolve the default shipped cardinal profile via importlib.resources.
+
+    Called lazily via Field(default_factory=...) so module import order
+    stays clean — this imports from the species package, which imports
+    from this module in turn (get_settings()). The deferred call breaks
+    the cycle.
+    """
+    # Deferred import: cardinal_nest_monitor.species also imports from
+    # this module (config.get_settings). A top-level import would cycle.
+    import importlib.resources as _res
+
+    ref = _res.files("cardinal_nest_monitor.species.profiles") / "northern_cardinal.toml"
+    return Path(str(ref))
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -150,15 +166,21 @@ class Settings(BaseSettings):
     # ── Species profile (generic-nest-monitor branch) ───────────────────
     # Path to the TOML profile that drives target/threat identity, prompt
     # rendering, lifecycle timing, and user-facing copy. Loaded once at
-    # startup via species.loader.get_species_profile() and cached for the
-    # process lifetime. Ships with `species/northern_cardinal.toml` (the
-    # current cardinal behavior) and `species/american_robin.toml`
-    # (validation target for the refactor).
+    # startup via cardinal_nest_monitor.species.get_species_profile() and
+    # cached for the process lifetime.
+    #
+    # Default resolves via importlib.resources to the shipped cardinal
+    # profile inside the installed package — this means the default works
+    # regardless of the caller's cwd (e.g. launchd WorkingDirectory).
+    # Override via SPECIES_PROFILE_PATH in .env to point at any other
+    # filesystem path (custom profile, or the shipped robin profile).
     species_profile_path: Path = Field(
-        Path("./species/northern_cardinal.toml"),
+        default_factory=lambda: _default_species_profile_path(),
         description=(
-            "Path to the active species profile TOML. Override via "
-            ".env (SPECIES_PROFILE_PATH) to monitor a different bird."
+            "Path to the active species profile TOML. Defaults to the "
+            "shipped `northern_cardinal` profile resolved via "
+            "importlib.resources. Override via SPECIES_PROFILE_PATH to "
+            "monitor a different bird."
         ),
     )
 

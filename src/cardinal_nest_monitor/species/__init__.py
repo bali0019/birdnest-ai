@@ -1,13 +1,15 @@
 """Species profile package.
 
 Public surface:
-    SpeciesProfile     — the validated Pydantic profile model
-    load_species_profile(path) — parse + validate a TOML profile file
-    get_species_profile()      — cached accessor for the active profile
-                                 (reads SPECIES_PROFILE_PATH setting)
+    SpeciesProfile               — the validated Pydantic profile model
+    load_species_profile(path)   — parse + validate a TOML profile file
+    get_species_profile()        — cached accessor for the active profile
+                                   (reads SPECIES_PROFILE_PATH setting)
+    builtin_profile_path(slug)   — resolve a shipped profile to a filesystem
+                                   path via importlib.resources
 """
 
-from species._schema import (
+from cardinal_nest_monitor.species._schema import (
     AlertCopy,
     AmbientSpeciesEntry,
     FieldMarks,
@@ -21,7 +23,8 @@ from species._schema import (
     ThreatFieldMarks,
     Threats,
 )
-from species.loader import (
+from cardinal_nest_monitor.species.loader import (
+    builtin_profile_path,
     clear_species_profile_cache,
     get_species_profile,
     load_species_profile,
@@ -40,6 +43,7 @@ __all__ = [
     "TargetFieldMarks",
     "ThreatFieldMarks",
     "Threats",
+    "builtin_profile_path",
     "clear_species_profile_cache",
     "get_species_profile",
     "load_species_profile",

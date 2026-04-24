@@ -6,18 +6,61 @@ Failure mode: invalid profiles fail fast at startup with a clear
 pydantic validation error. Do NOT swallow ValidationError and fall
 back to a default profile; the whole point is that the runtime sees
 exactly the species it was configured for.
+
+Shipped profile resolution:
+  Profiles bundled with the package live under
+  ``cardinal_nest_monitor/species/profiles/``. They're installed as
+  package data (see pyproject.toml `[tool.setuptools.package-data]`)
+  and resolved at runtime via ``importlib.resources``. This means the
+  default profile path works regardless of the caller's cwd — e.g.
+  when launchd starts the CLI from a WorkingDirectory that doesn't
+  contain a species/ directory.
+
+  Users can still override via SPECIES_PROFILE_PATH to point at any
+  filesystem path for a custom profile.
 """
 
 from __future__ import annotations
 
+import importlib.resources as _res
 import logging
 import tomllib
 from functools import lru_cache
 from pathlib import Path
 
-from species._schema import SpeciesProfile
+from cardinal_nest_monitor.species._schema import SpeciesProfile
 
 log = logging.getLogger(__name__)
+
+
+def builtin_profile_path(slug: str) -> Path:
+    """Return the absolute filesystem path to a profile shipped inside
+    the package. Works both from the source tree (editable install) and
+    from a wheel-installed distribution — uses importlib.resources so
+    the location resolves however the package is installed.
+
+    Raises FileNotFoundError if the slug doesn't match a shipped profile.
+    """
+    filename = f"{slug}.toml"
+    try:
+        ref = _res.files("cardinal_nest_monitor.species.profiles") / filename
+    except ModuleNotFoundError as e:
+        raise FileNotFoundError(
+            f"cardinal_nest_monitor.species.profiles package not found "
+            f"(did you forget `pip install -e .`?): {e}"
+        ) from e
+    # .files() returns a Traversable; we need a concrete filesystem path.
+    # For an editable install this is the real file on disk. For a zipped
+    # wheel we'd need to extract via .as_file() — but this project isn't
+    # distributed as a zipapp so a direct str() cast works.
+    path = Path(str(ref))
+    if not path.exists():
+        raise FileNotFoundError(
+            f"shipped profile not found: {slug!r} "
+            f"(looked in {path}). Ships with: "
+            f"{[p.name for p in path.parent.iterdir() if p.suffix == '.toml']}"
+        )
+    return path
 
 
 def load_species_profile(path: str | Path) -> SpeciesProfile:
@@ -32,7 +75,8 @@ def load_species_profile(path: str | Path) -> SpeciesProfile:
     if not p.exists():
         raise FileNotFoundError(
             f"species profile not found: {p!s}. Set SPECIES_PROFILE_PATH "
-            "in .env to an existing species/*.toml file."
+            "in .env to an existing profile TOML file, or use a shipped "
+            "profile (northern_cardinal, american_robin)."
         )
     with p.open("rb") as f:
         data = tomllib.load(f)

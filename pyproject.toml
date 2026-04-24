@@ -31,6 +31,13 @@ cardinal-nest-monitor = "cardinal_nest_monitor.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Include the shipped species profile TOMLs (and any future data files)
+# inside the cardinal_nest_monitor package distribution. Without this,
+# `pip install` would skip the TOMLs and importlib.resources lookups
+# would fail at runtime.
+[tool.setuptools.package-data]
+"cardinal_nest_monitor.species" = ["profiles/*.toml"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
