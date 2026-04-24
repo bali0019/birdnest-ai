@@ -11,6 +11,7 @@ ALTER TABLE migration path works.
 from __future__ import annotations
 
 import sqlite3
+import time
 
 import pytest
 
@@ -327,3 +328,243 @@ def test_ro_connection_sees_committed_writer_state(tmp_path):
         assert rows[0]["ts"] == pytest.approx(12345.0)
     finally:
         store.close()
+
+
+# ── Transactional record() — Codex 2026-04-23 race fix ─────────────────
+# record() and record_alert() must wrap their main INSERT plus the paired
+# state UPDATE in a single BEGIN IMMEDIATE / COMMIT so a cross-process RO
+# reader can never observe the new row without the matching derived-state
+# update. Without this, the session-burst arming helper would silently
+# skip arming in exactly the deploy-during-absence case it exists to
+# handle (reader sees fresh observation row → also reads state.in_absence
+# which is stale-False → logs "mom on nest" and never arms).
+
+
+class _SqlRecordingProxy:
+    """Wraps a sqlite3.Connection and records the first two tokens of
+    every execute() call for transaction-ordering assertions.
+
+    sqlite3.Connection is a C type whose ``execute`` attribute is a slot
+    and cannot be monkeypatched directly — hence the proxy (same
+    pattern as ``_ExecCountingProxy`` above).
+    """
+
+    def __init__(self, inner, statements: list[str]) -> None:
+        self._inner = inner
+        self._statements = statements
+
+    def execute(self, sql, *args, **kwargs):
+        parts = sql.strip().split()
+        head = parts[0].upper() if parts else ""
+        if len(parts) > 1:
+            head += " " + parts[1].upper()
+        self._statements.append(head)
+        return self._inner.execute(sql, *args, **kwargs)
+
+    def __getattr__(self, attr):
+        return getattr(self._inner, attr)
+
+
+def test_record_wraps_writes_in_transaction(tmp_path):
+    """record() must issue BEGIN IMMEDIATE, then INSERT into observations,
+    then UPDATE state, then COMMIT — in that order and as a single
+    atomic unit. Regression guard: without this, Codex's P2 race
+    (reader sees observation row before state update) silently
+    re-opens.
+    """
+    from cardinal_nest_monitor.schema import NestObservation
+
+    db = tmp_path / "state.sqlite"
+    store = StateStore(db)
+
+    statements: list[str] = []
+    store._conn = _SqlRecordingProxy(store._conn, statements)
+    try:
+        obs = NestObservation(
+            mother_cardinal_present="true",
+            cardinal_on_nest="true",
+            eggs_visible="false",
+            egg_count_estimate=None,
+            nest_visible=True,
+            nest_disturbed="false",
+            species_detected=["northern_cardinal"],
+            threat_species_detected=[],
+            near_nest_activity=False,
+            direct_nest_interaction=False,
+            confidence=0.9,
+            summary="On nest.",
+        )
+        store.record(time.time(), False, None, obs, None)
+    finally:
+        store.close()
+
+    # Filter to transaction-shape statements. Reads (SELECT) and
+    # PRAGMAs are fine anywhere; we only need BEGIN/INSERT/UPDATE/COMMIT
+    # in the right order.
+    tx = [
+        s for s in statements
+        if s.startswith(("BEGIN", "INSERT", "UPDATE", "COMMIT", "ROLLBACK"))
+    ]
+    assert any(s.startswith("BEGIN") for s in tx), (
+        "record() must open an explicit transaction (BEGIN IMMEDIATE) "
+        f"around its writes — saw only {tx}"
+    )
+    assert any(s.startswith("COMMIT") for s in tx), (
+        f"record() must COMMIT the transaction on success — saw only {tx}"
+    )
+    begin_i = next(i for i, s in enumerate(tx) if s.startswith("BEGIN"))
+    insert_i = next(
+        i for i, s in enumerate(tx) if s.startswith("INSERT INTO")
+    )
+    update_i = next(
+        i for i, s in enumerate(tx) if s.startswith("UPDATE STATE")
+    )
+    commit_i = next(
+        i for i, s in enumerate(tx) if s.startswith("COMMIT")
+    )
+    assert begin_i < insert_i < update_i < commit_i, (
+        f"transaction discipline violated: {tx} "
+        f"(expected BEGIN < INSERT observations < UPDATE state < COMMIT)"
+    )
+
+
+def test_record_alert_wraps_writes_in_transaction(tmp_path):
+    """Same contract for record_alert: INSERT alerts + UPDATE state must
+    be atomic."""
+    from cardinal_nest_monitor.schema import AlertDecision, Severity
+
+    db = tmp_path / "state.sqlite"
+    store = StateStore(db)
+
+    statements: list[str] = []
+    store._conn = _SqlRecordingProxy(store._conn, statements)
+    try:
+        decision = AlertDecision(
+            severity=Severity.MEDIUM,
+            rule_id="mother_returned",
+            species=[],
+            title="🟢 Mom is back",
+            summary="Mother cardinal returned to the nest.",
+            confidence=0.9,
+        )
+        store.record_alert(decision, time.time(), None)
+    finally:
+        store.close()
+
+    tx = [
+        s for s in statements
+        if s.startswith(("BEGIN", "INSERT", "UPDATE", "COMMIT", "ROLLBACK"))
+    ]
+    assert any(s.startswith("BEGIN") for s in tx), (
+        "record_alert() must open an explicit transaction around its writes"
+    )
+    assert any(s.startswith("COMMIT") for s in tx), (
+        "record_alert() must COMMIT on success"
+    )
+
+
+def test_concurrent_reader_never_sees_post_insert_pre_update_middle(tmp_path):
+    """Cross-connection guarantee: while a writer is mid-record(), the RO
+    reader must see EITHER the pre-record snapshot OR the post-record
+    snapshot — never the inconsistent middle where the observation row
+    has committed but state has not.
+
+    This is the Codex P2 scenario. We run the writer in a background
+    thread alternating mom on/off the nest, while the main thread polls
+    the RO connection. For each snapshot we assert: if the newest
+    observation says cardinal_on_nest=true at high confidence, then
+    state.in_absence must be False. If the writer wasn't atomic, this
+    assertion would fail on some snapshots (observation committed,
+    state still in_absence=True from the prior absence).
+    """
+    import threading
+
+    from cardinal_nest_monitor.schema import NestObservation
+
+    db = tmp_path / "state.sqlite"
+    store = StateStore(db)
+
+    def _obs(on_nest: bool):
+        return NestObservation(
+            mother_cardinal_present="true" if on_nest else "false",
+            cardinal_on_nest="true" if on_nest else "false",
+            eggs_visible="false",
+            egg_count_estimate=None,
+            nest_visible=True,
+            nest_disturbed="false",
+            species_detected=["northern_cardinal"] if on_nest else [],
+            threat_species_detected=[],
+            near_nest_activity=False,
+            direct_nest_interaction=False,
+            confidence=0.95,
+            summary="On nest." if on_nest else "Nest empty.",
+        )
+
+    baseline_ts = time.time()
+    # Seed: on nest → flip to absence so state.in_absence=True.
+    store.record(baseline_ts, False, None, _obs(True), None)
+    store.record(baseline_ts + 200, False, None, _obs(False), None)
+
+    stop_writer = threading.Event()
+    writer_error: list[BaseException] = []
+
+    def _writer() -> None:
+        try:
+            i = 0
+            while not stop_writer.is_set() and i < 40:
+                ts = baseline_ts + 400 + i * 200
+                on_nest = (i % 2 == 0)  # alternate — stresses the race window
+                store.record(ts, False, None, _obs(on_nest), None)
+                i += 1
+        except BaseException as e:
+            writer_error.append(e)
+
+    t = threading.Thread(target=_writer, daemon=True)
+    t.start()
+
+    inconsistencies: list[str] = []
+    snapshots_seen = 0
+    start = time.monotonic()
+    try:
+        while t.is_alive() and time.monotonic() - start < 5.0:
+            cur = store._ro_conn.execute(
+                "SELECT "
+                " (SELECT MAX(ts) FROM observations) AS latest_obs_ts, "
+                " (SELECT observation_json FROM observations "
+                "  ORDER BY ts DESC LIMIT 1) AS latest_obs_json, "
+                " in_absence "
+                "FROM state WHERE id = 1"
+            )
+            row = cur.fetchone()
+            if row is None:
+                continue
+            snapshots_seen += 1
+            latest_json = row["latest_obs_json"] or ""
+            in_absence_flag = bool(row["in_absence"])
+            # Invariant: a confident "on nest" observation as newest
+            # implies state.in_absence must NOT be True. If the writer
+            # wasn't atomic, some snapshots would show latest_obs=true
+            # yet in_absence=True (from the prior absence — the state
+            # UPDATE hadn't committed when we peeked).
+            if (
+                '"cardinal_on_nest":"true"' in latest_json
+                and in_absence_flag
+            ):
+                inconsistencies.append(
+                    f"latest_obs cardinal_on_nest=true but state.in_absence=True"
+                )
+    finally:
+        stop_writer.set()
+        t.join(timeout=5.0)
+        store.close()
+
+    assert not writer_error, f"writer thread raised: {writer_error}"
+    assert snapshots_seen >= 10, (
+        f"reader didn't see enough snapshots (only {snapshots_seen}); "
+        "race window may not have been exercised"
+    )
+    assert not inconsistencies, (
+        "reader observed post-INSERT / pre-UPDATE inconsistent state — "
+        f"the record() transaction was bypassed somehow. First few: "
+        f"{inconsistencies[:3]}"
+    )

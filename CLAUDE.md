@@ -583,6 +583,21 @@ Log labels distinguish the two burst types: `cadence: 60s → 30s (burst)` is ca
 
 **Don't weaken the evidence gate.** A future Claude might be tempted to "simplify" by arming session-burst unconditionally at startup if `state.in_absence=True`. That's the exact bug the evidence gate prevents — it re-arms based on STALE pre-restart state, which could be arbitrarily old if the analyzer was also down. Keep the `MAX(ts) > startup_wall_ts` check.
 
+**Cross-connection race fix (Codex 2026-04-23).** The session-burst arming helper originally did two reads: first `SELECT MAX(ts) FROM observations`, then `store.get_state()`. Under the split-process topology where the downloader's RO connection polls while the analyzer's writer connection records, two separate SELECTs could straddle a mid-record() commit boundary. `StateStore.record()` used to autocommit its observations INSERT and its state UPDATE as two separate transactions — the RO reader could therefore observe the new observation row (INSERT committed) WHILE state.in_absence was still the pre-record value (UPDATE pending). Result: the arming helper would log "mom on nest" based on stale state and never arm session-burst, in exactly the deploy-during-absence case the feature exists to handle.
+
+Two-part fix (`src/cardinal_nest_monitor/state.py` + `cadence.py`):
+
+1. **Writer atomicity.** `record()` and `record_alert()` now wrap their INSERT + paired state UPDATE in `BEGIN IMMEDIATE` / `COMMIT` (with a `ROLLBACK` on exception). BEGIN IMMEDIATE grabs the write lock upfront so contention fails fast rather than mid-transaction. Under WAL mode, concurrent readers see either the pre-transaction snapshot or the post-transaction snapshot — never the inconsistent middle. The `is_stale` early-return path also commits cleanly so the observations history INSERT is durable even when the derived-state UPDATE is skipped.
+
+2. **Reader atomicity (belt-and-suspenders).** `arm_session_burst_if_absent` replaced its two separate SELECTs with one compound SELECT: `SELECT (SELECT MAX(ts) FROM observations) AS latest_obs_ts, in_absence FROM state WHERE id = 1`. Captures one snapshot of both tables under a single SQLite read lock. Combined with the writer atomicity, it's impossible to observe the post-INSERT pre-UPDATE middle.
+
+Regression coverage in `tests/test_state_migration.py`:
+- `test_record_wraps_writes_in_transaction` — source-trace assertion that BEGIN IMMEDIATE precedes INSERT observations precedes UPDATE state precedes COMMIT in `record()`.
+- `test_record_alert_wraps_writes_in_transaction` — same discipline for `record_alert()`.
+- `test_concurrent_reader_never_sees_post_insert_pre_update_middle` — threading-based: writer alternates mom on/off nest in a background thread, reader polls the compound SELECT, assertion: a snapshot with `cardinal_on_nest="true"` + confident never coexists with `state.in_absence=True`. If the transaction discipline regresses, this test will fail under concurrent load.
+
+**Don't replace the explicit transaction with "just use autocommit."** autocommit-per-statement IS the bug this fix addresses. Keep BEGIN IMMEDIATE / COMMIT in `record()` and `record_alert()`. If you're adding a new write method that touches both an append-only table and the single-row state, follow the same pattern.
+
 ### 22. Multi-image analysis (2026-04-16)
 
 Previously the analyzer received one downscaled JPEG per snap. Now it receives THREE crops per request:

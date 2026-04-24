@@ -14,6 +14,7 @@ function keeps tests and production in lock-step.
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, time as dtime
 
@@ -559,31 +560,52 @@ async def test_arm_session_burst_skips_when_no_fresh_observation(store, settings
 # ── Role parity: both downloader and combined mode must arm session-burst ──
 
 
+_ARMING_CALL_RE = re.compile(
+    r"asyncio\.create_task\(\s*arm_session_burst_if_absent\("
+)
+"""Matches ``asyncio.create_task(  arm_session_burst_if_absent(`` across
+arbitrary intervening whitespace (incl. newlines + indentation). Load-
+bearing: the guards below scan the SPECIFIC STARTUP FUNCTION's source —
+not the whole module — so a stray import or a dangling reference in
+dead code cannot satisfy the check (Codex P3, 2026-04-23)."""
+
+
 def test_downloader_arms_session_burst_on_startup():
     """downloader_loop.run_downloader_service must launch the
-    arm_session_burst_if_absent task. Regresses if someone rewires the
-    downloader startup to drop the arming task.
+    arm_session_burst_if_absent task as an asyncio.create_task. Regresses
+    if someone rewires the downloader startup to drop the arming task.
+
+    Guard shape notes:
+    - Inspect ``run_downloader_service``'s source directly, NOT the
+      module (module-level search would accept the import alone).
+    - Regex against ``create_task( arm_session_burst_if_absent(`` so a
+      bare reference or aliasing doesn't pass. Any legitimate refactor
+      that still launches the task via ``asyncio.create_task`` will
+      satisfy this; anything that drops the launch will fail.
     """
     import inspect
 
-    from cardinal_nest_monitor import downloader_loop as dl
+    from cardinal_nest_monitor.downloader_loop import run_downloader_service
 
-    src = inspect.getsource(dl)
-    assert "arm_session_burst_if_absent(" in src, (
-        "downloader_loop must launch the session-burst arming task on "
-        "startup — without it, restart catch-up is silently disabled"
+    src = inspect.getsource(run_downloader_service)
+    assert _ARMING_CALL_RE.search(src), (
+        "run_downloader_service must launch arm_session_burst_if_absent "
+        "via asyncio.create_task — without it, restart catch-up is "
+        "silently disabled"
     )
 
 
 def test_combined_mode_arms_session_burst_on_startup():
-    """main.py's run_combined must also launch the arming task. Role
-    parity with the downloader — see CLAUDE.md §21."""
+    """main.py's run_combined must also launch the arming task via
+    asyncio.create_task. Role parity with the downloader — see
+    CLAUDE.md §21."""
     import inspect
 
-    from cardinal_nest_monitor import main as main_mod
+    from cardinal_nest_monitor.main import run_combined
 
-    src = inspect.getsource(main_mod)
-    assert "arm_session_burst_if_absent(" in src, (
-        "main.py must launch the session-burst arming task so combined "
-        "mode has the same restart-catch-up semantics as split mode"
+    src = inspect.getsource(run_combined)
+    assert _ARMING_CALL_RE.search(src), (
+        "run_combined must launch arm_session_burst_if_absent via "
+        "asyncio.create_task so combined mode has the same restart-"
+        "catch-up semantics as split mode"
     )
