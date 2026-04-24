@@ -87,18 +87,31 @@ There are two services running on a computer that stays on all day. The first on
 They are separate on purpose. On April 15, 2026, a stuck API call froze the entire system for three hours during peak daylight. No photos, no alerts, nothing. The eggs were unmonitored while the sun was out and the thrashers were active. Splitting the services means the camera never stops taking pictures, even if the analysis side crashes, restarts, or runs out of credits. When the analyzer comes back, it works through whatever piled up while it was gone.
 
 ```
-┌──────────────────────────┐          ┌──────────────────────────────┐
-│  DOWNLOADER              │          │  ANALYZER                    │
-│                          │          │                              │
-│  Blink camera            │  spool   │  Claude Sonnet 4.6           │
-│    adaptive cadence      ├────────→ │    species ID + threat eval  │
-│    30s / 1m / 5m / 30m   │          │    Opus 4.7 verification     │
-│                          │          │    Discord alerts            │
-│  Never stops.            │          │    feed + analytics          │
-│  Not even during         │          │                              │
-│  code deploys.           │          │  Can restart without         │
-│                          │          │  losing a single snap.       │
-└──────────────────────────┘          └──────────────────────────────┘
+┌──────────────────────────────┐
+│  DOWNLOADER                  │
+│                              │
+│  Blink camera                │
+│  Adaptive cadence:           │
+│    30s / 1m / 5m / 30m       │
+│                              │
+│  Never stops. Not even       │
+│  during code deploys.        │
+└──────────────────────────────┘
+               │
+         spool on disk
+               ↓
+┌──────────────────────────────┐
+│  ANALYZER                    │
+│                              │
+│  Claude Sonnet 4.6           │
+│    species ID + threat eval  │
+│  Opus 4.7 verification       │
+│  Discord alerts              │
+│  feed + analytics            │
+│                              │
+│  Can restart without         │
+│  losing a single snap.       │
+└──────────────────────────────┘
 ```
 
 The cadence adapts to the situation. When she's on the nest, a photo every five minutes is enough. When she's away foraging, the interval drops to sixty seconds. Overnight, when cardinals sleep on their eggs, it relaxes to every thirty minutes.
@@ -177,7 +190,7 @@ The female cardinal and the Brown Thrasher are both brownish birds. The analyzer
 | Monthly cost (Anthropic) | ~$180-270 (multi-image on) |
 | Camera battery life | 10 to 14 days |
 | Lifecycle stages tracked | 6 |
-| Tests in the suite | 192 |
+| Tests in the suite | 298 |
 | Reaction time in the burst window (first 3 min after she leaves) | Under 30 seconds |
 | Reaction time when she's away (after burst) | Under a minute |
 | Reaction time when she's home | Under five minutes |
@@ -258,7 +271,7 @@ launchctl list | grep cardinalnest
 ```bash
 source venv/bin/activate
 TEST_MODE=true python -m pytest tests/ -v
-# 192 tests. All must pass before deploying any change.
+# All must pass before deploying any change.
 ```
 
 ---
@@ -371,7 +384,7 @@ See [`.env.example`](./.env.example) for the full list with documentation.
 
 ## Tech stack
 
-Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos, on five separate channels. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. 192 tests in pytest, including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
+Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos, on five separate channels. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. Full pytest suite including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
 
 ---
 
@@ -402,7 +415,7 @@ src/cardinal_nest_monitor/
     test_discord.py          Webhook smoke test
 
 launchd/               macOS LaunchAgent plists
-tests/                 192 tests (unit + integration)
+tests/                 Unit + integration test suite
 evidence/reference/    Curated regression images for species ID validation
 ```
 
