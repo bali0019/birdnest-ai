@@ -9,6 +9,7 @@
 - **Apr 13** — Egg laying begins
 - **Apr 14** — Incubation begins
 - **Apr 25 – 27** — Hatch (expected)
+- **May 5 – 7** — Fledge (expected)
 
 ![Brown Thrasher stealing an egg from the cardinal nest](evidence/reference/thrasher_stealing_egg_highlighted.gif)
 
