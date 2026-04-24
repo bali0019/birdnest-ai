@@ -141,13 +141,20 @@ class Settings(BaseSettings):
     forced_opus_interval_seconds: int = Field(300, ge=0, le=3600)
 
     # ── Paths ───────────────────────────────────────────────────────────
-    data_dir: Path = Field(Path("./data"))
-    evidence_dir: Path = Field(Path("./evidence"))
-    pause_lock_path: Path = Field(Path("./pause.lock"))
+    # ISOLATION NOTE (generic-nest-monitor branch, 2026-04-23):
+    # Defaults point at `*_generic` paths so a generic-branch deployment
+    # NEVER touches the production cardinal service's live state.sqlite,
+    # spool, or evidence directories. The cardinal branch on main uses
+    # `./data`, `./evidence`, and `./pause.lock`; this branch uses the
+    # `_generic` suffixed variants. A `.env` override can repoint any of
+    # these if needed (e.g. for running a single-branch dev install).
+    data_dir: Path = Field(Path("./data_generic"))
+    evidence_dir: Path = Field(Path("./evidence_generic"))
+    pause_lock_path: Path = Field(Path("./pause_generic.lock"))
 
     # ── Spool (two-service decoupled architecture, 2026-04-15) ──────────
     spool_dir: Path = Field(
-        Path("./data/spool"),
+        Path("./data_generic/spool"),
         description="Filesystem spool for raw snaps. Downloader writes here; "
                     "analyzer claims from here. pending/ and processing/ "
                     "subdirs are created lazily by spool.py.",
