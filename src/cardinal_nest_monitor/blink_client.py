@@ -351,6 +351,62 @@ async def motion_loop(
         await asyncio.sleep(settings.motion_poll_seconds)
 
 
+async def _wait_for_next_snap_deadline(
+    snap_now: asyncio.Event,
+    last_snap_monotonic: float,
+    get_interval_fn: Callable[[], int] | None,
+    settings: Any,
+    *,
+    poll_interval: float = 15.0,
+) -> None:
+    """Wait until ``last_snap_monotonic + get_interval()`` (minus the 6 s
+    snap-fetch headroom), re-evaluating the interval every ``poll_interval``
+    seconds so a mid-wait cadence shrink (e.g. burst engaging because the
+    analyzer flipped ``in_absence`` True right after the last snap) actually
+    takes effect on THIS wait, not the NEXT one.
+
+    Design notes (load-bearing — see CLAUDE.md §21 + reactive-tickling-rose
+    plan):
+
+    * **Monotonic anchor.** Deadline math uses ``time.monotonic()``; wall
+      clock (``time.time()``) is reserved for cadence/state decisions
+      inside ``compute_snap_interval``. NTP adjustments must not skew
+      inter-snap spacing.
+    * **Don't snap immediately** when the interval shrinks. Fire when
+      ``elapsed >= current_interval - 6``, not at the next poll tick.
+      Otherwise a 300→30 shrink observed at t=20s would produce a snap at
+      t=20s (way off burst cadence); instead we clamp the sleep so the
+      next iteration wakes at the true 30s deadline.
+    * **Exception fallback.** Matches the previous single-shot code path:
+      if ``get_interval_fn`` raises, log and fall back to
+      ``settings.current_snap_interval(datetime.now().time())`` for that
+      tick. One transient callback error must never crash ``snap_loop``.
+    * **Motion nudge preempts.** ``snap_now.set()`` from ``motion_loop``
+      returns immediately within the current sleep quantum.
+    """
+    while True:
+        if get_interval_fn is not None:
+            try:
+                interval = get_interval_fn()
+            except Exception:
+                log.exception("get_interval callback raised; using static fallback")
+                interval = settings.current_snap_interval(datetime.now().time())
+        else:
+            interval = settings.current_snap_interval(datetime.now().time())
+        # -6 s matches the pre-helper behavior: snap_picture itself takes
+        # ~6 s, so waking 6 s before the nominal deadline hits the cadence.
+        deadline_offset = max(1, interval - 6)
+        remaining = (last_snap_monotonic + deadline_offset) - time.monotonic()
+        if remaining <= 0:
+            return
+        sleep_for = min(remaining, poll_interval)
+        try:
+            await asyncio.wait_for(snap_now.wait(), timeout=sleep_for)
+            return  # motion nudge preempts the wait
+        except asyncio.TimeoutError:
+            continue  # re-evaluate on next tick
+
+
 async def snap_loop(
     blink: Blink,
     snap_now: asyncio.Event,
@@ -450,6 +506,14 @@ async def snap_loop(
                 continue
             log.exception("snap cycle failed")
 
+        # Anchor the next wait on a monotonic clock captured AS CLOSE AS
+        # POSSIBLE to the moment the snap was actually taken. This is what
+        # the mid-wait re-evaluation subtracts from, so drift in
+        # `time.monotonic()` between here and the helper directly affects
+        # cadence. Captured whether or not `jpeg` is truthy so a failed
+        # snap cycle still waits the right amount before retry.
+        last_snap_monotonic = time.monotonic()
+
         if not jpeg:
             log.warning("snap returned no image; skipping")
         else:
@@ -479,22 +543,15 @@ async def snap_loop(
 
         # ── wait for next tick or motion nudge ──────────────────────────
         snap_now.clear()
-        # Use the get_interval callback if provided (dynamic cadence — e.g.
-        # Pattern A absence-aware); otherwise static quiet-hours / default.
-        # Motion events still bypass via snap_now regardless of interval.
-        if get_interval is not None:
-            try:
-                interval = get_interval()
-            except Exception:
-                log.exception("get_interval callback raised; using static fallback")
-                interval = settings.current_snap_interval(datetime.now().time())
-        else:
-            interval = settings.current_snap_interval(datetime.now().time())
-        timeout = max(1, interval - 6)
-        try:
-            await asyncio.wait_for(snap_now.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            pass
+        # Re-evaluates get_interval every 15s so a mid-wait cadence shrink
+        # (e.g. analyzer flips in_absence→True and burst engages right
+        # after this snap) takes effect on THIS wait. Motion nudge still
+        # preempts immediately. See _wait_for_next_snap_deadline for the
+        # Codex-vetted semantics (monotonic anchor, no snap-immediately,
+        # get_interval exception fallback).
+        await _wait_for_next_snap_deadline(
+            snap_now, last_snap_monotonic, get_interval, settings
+        )
 
 
 async def download_clip(

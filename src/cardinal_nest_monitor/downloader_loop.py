@@ -56,6 +56,7 @@ from cardinal_nest_monitor.blink_client import (
     motion_loop,
     snap_loop,
 )
+from cardinal_nest_monitor.cadence import compute_snap_interval
 from cardinal_nest_monitor.config import get_settings
 from cardinal_nest_monitor.notifier import Notifier
 from cardinal_nest_monitor.state import StateStore
@@ -268,56 +269,38 @@ async def run_downloader_service() -> int:
     _last_interval_logged: dict[str, int] = {"value": 0}
 
     def get_interval() -> int:
-        now = datetime.now().time()
-        label = ""
-        # Quiet hours override everything (including absence) — matches
-        # main.py's priority ordering for consistency.
-        if settings.in_quiet_hours(now):
+        now_ts = time.time()
+        # Quiet hours win regardless of state freshness. Short-circuit
+        # here so we don't even probe the DB during quiet-hours cycles.
+        if settings.in_quiet_hours(datetime.fromtimestamp(now_ts).time()):
             interval = settings.quiet_snap_interval_seconds
             label = "quiet"
         else:
+            # Stale-state guard BEFORE delegating: if the analyzer hasn't
+            # written an observation in > 10 min, its in_absence /
+            # absence_started_ts are frozen on old truth — trusting them
+            # would keep us on a stale cadence for hours. Fall back to a
+            # safe constant instead.
             latest_ts = _latest_state_ts(store)
-            now_ts = time.time()
             if (
                 latest_ts is None
                 or (now_ts - latest_ts) > _STATE_STALENESS_THRESHOLD_S
             ):
-                # Analyzer is down / cold-boot / has been silent for
-                # > 10 min. Fall back to a safe constant cadence rather
-                # than trust the frozen in_absence flag.
                 interval = _STALE_STATE_FALLBACK_S
                 label = "stale-state-fallback"
             else:
                 try:
-                    _state = store.get_state()
-                    in_absence = _state.in_absence
-                    absence_started_ts = _state.absence_started_ts
+                    state = store.get_state()
                 except Exception:
                     log.exception(
                         "downloader: store.get_state() raised; using default interval"
                     )
-                    in_absence = False
-                    absence_started_ts = None
-                if in_absence:
-                    # Burst cadence: peak-predation-risk window for the first
-                    # burst_duration_seconds after absence onset. Thrasher
-                    # attacks are ~4s events; 60s absence cadence can miss
-                    # them. Tighten to burst_snap_interval_seconds for the
-                    # first few minutes, then relax back to the normal
-                    # absence interval.
-                    if (
-                        absence_started_ts is not None
-                        and (time.time() - absence_started_ts)
-                        < settings.burst_duration_seconds
-                    ):
-                        interval = settings.burst_snap_interval_seconds
-                        label = "burst"
-                    else:
-                        interval = settings.absence_snap_interval_seconds
-                        label = "absence"
-                else:
                     interval = settings.snap_interval_seconds
                     label = "default"
+                else:
+                    interval, label = compute_snap_interval(
+                        settings, state, now_ts
+                    )
         if _last_interval_logged["value"] != interval:
             log.info(
                 "cadence: %ds → %ds (%s)",

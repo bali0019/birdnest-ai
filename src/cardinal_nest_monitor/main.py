@@ -23,6 +23,7 @@ from typing import Any
 
 from cardinal_nest_monitor import analyzer as analyzer_mod
 from cardinal_nest_monitor import verifier as verifier_mod
+from cardinal_nest_monitor.cadence import compute_snap_interval
 from cardinal_nest_monitor.blink_client import (
     _sanitize_clip_timestamp,
     connect,
@@ -682,28 +683,24 @@ async def run_combined() -> int:
 
     # Pattern A — absence-aware dynamic cadence.
     # Computed every time snap_loop is about to wait for the next tick.
-    # Priority: quiet hours > in_absence > default.
+    # Precedence (shared with downloader via cadence.compute_snap_interval):
+    #   quiet > burst > absence > default.
+    # PARITY FIX: prior to 2026-04-23 this branched only on quiet / absence /
+    # default and never checked burst_duration_seconds — combined-mode
+    # snap_loop never actually engaged the §21 burst cadence. Routing through
+    # the shared helper keeps split and combined modes in lock-step.
     _last_interval_logged: dict[str, int] = {"value": 0}
 
     def get_interval() -> int:
-        now = datetime.now().time()
-        label = ""
-        if settings.in_quiet_hours(now):
-            interval = settings.quiet_snap_interval_seconds
-            label = "quiet"
+        now_ts = time.time()
+        try:
+            state = store.get_state()
+        except Exception:
+            log.exception("absence check failed; using default interval")
+            interval = settings.snap_interval_seconds
+            label = "default"
         else:
-            try:
-                in_absence = store.get_state().in_absence
-            except Exception:
-                log.exception("absence check failed; using default interval")
-                in_absence = False
-            if in_absence:
-                interval = settings.absence_snap_interval_seconds
-                label = "absence"
-            else:
-                interval = settings.snap_interval_seconds
-                label = "default"
-        # Log only on transition to avoid noise
+            interval, label = compute_snap_interval(settings, state, now_ts)
         if _last_interval_logged["value"] != interval:
             log.info(
                 "cadence: %ds → %ds (%s)",
