@@ -149,7 +149,7 @@ def _fake_decision(severity: Severity = Severity.HIGH) -> AlertDecision:
 
 def _fake_obs() -> NestObservation:
     return NestObservation(
-        mother_cardinal_present="false", cardinal_on_nest="false",
+        attending_parent_present="false", attending_parent_on_nest="false",
         eggs_visible="false", egg_count_estimate=None,
         nest_visible=True, nest_disturbed="false",
         species_detected=["brown_thrasher"],

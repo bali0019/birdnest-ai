@@ -57,7 +57,7 @@ def _trip_detection(
 ) -> dict[str, Any]:
     """Walk observations chronologically and find foraging trips.
 
-    A trip is: cardinal_on_nest transitions `"true" → "false"` (she leaves)
+    A trip is: attending_parent_on_nest transitions `"true" → "false"` (she leaves)
     followed by `"false" → "true"` (she returns). Uncertain observations
     and low-confidence observations don't drive transitions.
 
@@ -78,7 +78,7 @@ def _trip_detection(
             continue
         if float(obs.get("confidence") or 0.0) < _MIN_CONFIDENCE:
             continue
-        state = obs.get("cardinal_on_nest")
+        state = obs.get("attending_parent_on_nest")
         if state not in ("true", "false"):
             continue  # uncertain / unknown → don't disturb
         # During quiet hours OR whenever the analyzer reported an IR/night
@@ -153,7 +153,7 @@ def _presence_totals(
             continue
         if float(obs.get("confidence") or 0.0) < _MIN_CONFIDENCE:
             continue
-        state = obs.get("cardinal_on_nest")
+        state = obs.get("attending_parent_on_nest")
         if state not in ("true", "false"):
             state = "unknown"
         # During quiet hours OR whenever the analyzer reported an IR/night

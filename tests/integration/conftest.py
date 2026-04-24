@@ -210,7 +210,7 @@ def reference_jpeg_path() -> Path:
 @pytest.fixture
 def cardinal_jpeg_bytes() -> bytes:
     """JPEG bytes of the female cardinal on the nest (use when the mocked
-    analyzer reports cardinal_on_nest=true so Discord text+image match)."""
+    analyzer reports attending_parent_on_nest=true so Discord text+image match)."""
     assert REFERENCE_CARDINAL.exists(), f"Missing {REFERENCE_CARDINAL}"
     return REFERENCE_CARDINAL.read_bytes()
 
@@ -240,8 +240,8 @@ def empty_nest_jpeg_bytes() -> bytes:
 
 def _base_obs_kwargs() -> dict:
     return dict(
-        mother_cardinal_present="true",
-        cardinal_on_nest="true",
+        attending_parent_present="true",
+        attending_parent_on_nest="true",
         eggs_visible="false",
         egg_count_estimate=None,
         nest_visible=True,
@@ -270,8 +270,8 @@ def obs_off_nest():
     def _make(**overrides) -> NestObservation:
         kw = _base_obs_kwargs()
         kw.update(
-            mother_cardinal_present="false",
-            cardinal_on_nest="false",
+            attending_parent_present="false",
+            attending_parent_on_nest="false",
             species_detected=[],
             threat_species_detected=[],
             near_nest_activity=False,
@@ -290,8 +290,8 @@ def obs_thrasher_near_nest():
     def _make(**overrides) -> NestObservation:
         kw = _base_obs_kwargs()
         kw.update(
-            mother_cardinal_present="false",
-            cardinal_on_nest="false",
+            attending_parent_present="false",
+            attending_parent_on_nest="false",
             species_detected=["brown_thrasher"],
             threat_species_detected=["brown_thrasher"],
             near_nest_activity=True,
@@ -310,8 +310,8 @@ def obs_thrasher_direct_interaction():
     def _make(**overrides) -> NestObservation:
         kw = _base_obs_kwargs()
         kw.update(
-            mother_cardinal_present="false",
-            cardinal_on_nest="false",
+            attending_parent_present="false",
+            attending_parent_on_nest="false",
             species_detected=["brown_thrasher"],
             threat_species_detected=["brown_thrasher"],
             near_nest_activity=True,
@@ -337,8 +337,8 @@ def obs_cardinal_direct_interaction():
     def _make(**overrides) -> NestObservation:
         kw = _base_obs_kwargs()
         kw.update(
-            mother_cardinal_present="false",
-            cardinal_on_nest="false",
+            attending_parent_present="false",
+            attending_parent_on_nest="false",
             species_detected=["brown_thrasher"],
             threat_species_detected=["brown_thrasher"],
             near_nest_activity=True,
@@ -357,8 +357,8 @@ def obs_mockingbird_near_nest():
     def _make(**overrides) -> NestObservation:
         kw = _base_obs_kwargs()
         kw.update(
-            mother_cardinal_present="false",
-            cardinal_on_nest="false",
+            attending_parent_present="false",
+            attending_parent_on_nest="false",
             species_detected=["northern_mockingbird"],
             threat_species_detected=[],
             near_nest_activity=True,

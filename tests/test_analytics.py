@@ -11,20 +11,20 @@ from cardinal_nest_monitor.schema import NestObservation
 from cardinal_nest_monitor.state import StateStore
 
 
-def _make_obs(cardinal_on_nest: str, **overrides) -> NestObservation:
+def _make_obs(attending_parent_on_nest: str, **overrides) -> NestObservation:
     base = dict(
-        mother_cardinal_present="true" if cardinal_on_nest == "true" else "false",
-        cardinal_on_nest=cardinal_on_nest,
+        attending_parent_present="true" if attending_parent_on_nest == "true" else "false",
+        attending_parent_on_nest=attending_parent_on_nest,
         eggs_visible="false",
         egg_count_estimate=None,
         nest_visible=True,
         nest_disturbed="false",
-        species_detected=["northern_cardinal"] if cardinal_on_nest == "true" else [],
+        species_detected=["northern_cardinal"] if attending_parent_on_nest == "true" else [],
         threat_species_detected=[],
         near_nest_activity=False,
         direct_nest_interaction=False,
         confidence=0.9,
-        summary=f"cardinal_on_nest={cardinal_on_nest}",
+        summary=f"attending_parent_on_nest={attending_parent_on_nest}",
     )
     base.update(overrides)
     return NestObservation(**base)
@@ -193,7 +193,7 @@ def test_dusk_ir_false_off_does_not_invent_trip(store, monkeypatch):
     invent phantom foraging trips on IR false-negatives at dusk.
 
     Reproduces by seeding a sequence: she's on the nest pre-dusk, then
-    several IR frames return cardinal_on_nest="false" with summaries that
+    several IR frames return attending_parent_on_nest="false" with summaries that
     mention IR mode, then she's back on the nest. Without the coercion,
     this would register as a trip with the IR window's duration. With
     the coercion, the IR frames are presumed on-nest and no trip fires.

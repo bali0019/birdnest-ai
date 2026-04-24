@@ -11,7 +11,7 @@ AlertDecision belongs in events.py.
 
 from __future__ import annotations
 
-from cardinal_nest_monitor.schema import NestObservation, ThreatSpecies
+from cardinal_nest_monitor.schema import NestObservation, UNKNOWN_THREAT
 
 
 # ── Constants ───────────────────────────────────────────────────────
@@ -24,12 +24,20 @@ from cardinal_nest_monitor.schema import NestObservation, ThreatSpecies
 CHICK_SIGHTING_CONFIDENCE_FLOOR = 0.75
 
 
-# Named threat species (derived from the enum so a new ThreatSpecies
-# member automatically shows up here). These bypass the ambiguous-
-# occupied-cup path and fire threat rules on a single frame.
-NAMED_THREATS = frozenset(
-    s.value for s in ThreatSpecies if s is not ThreatSpecies.UNKNOWN
-)
+def named_threats() -> frozenset[str]:
+    """Return the set of canonical threat names declared in the active
+    species profile — everything EXCEPT the reserved ``"unknown"``
+    sentinel. Species-agnostic replacement for the old
+    ``NAMED_THREATS`` frozenset (which was keyed on the dropped
+    ``ThreatSpecies`` enum).
+
+    Calling this at use-time (rather than at module import) ensures
+    that tests swapping the active profile see the correct list.
+    """
+    from cardinal_nest_monitor.species import get_species_profile
+
+    profile = get_species_profile()
+    return frozenset(n for n in profile.threats.names if n != UNKNOWN_THREAT)
 
 
 # Phrases Sonnet uses when the snap is in Blink's IR/night mode. The
@@ -89,7 +97,7 @@ def observation_indicates_ir_mode(obs: NestObservation) -> bool:
 def is_confirmed_chick_sighting(obs: NestObservation) -> bool:
     """True when this observation counts as a confirmed chick signal for
     lifecycle advancement. Tightened 2026-04-17: requires explicit
-    chicks_visible="true" AT OR ABOVE the confidence floor. mother_feeding_
+    young_visible="true" AT OR ABOVE the confidence floor. mother_feeding_
     chicks=true alone does NOT advance lifecycle; it still records
     last_feeding_event_ts separately in state.py for the 30-min MEDIUM
     suppression during feeding stage.
@@ -99,7 +107,7 @@ def is_confirmed_chick_sighting(obs: NestObservation) -> bool:
     which was a request for a shared predicate. This is it.
     """
     return (
-        obs.chicks_visible == "true"
+        obs.young_visible == "true"
         and obs.confidence >= CHICK_SIGHTING_CONFIDENCE_FLOOR
     )
 
@@ -115,7 +123,7 @@ def is_ambiguous_occupied_cup(obs: NestObservation) -> bool:
     Criteria (all must hold):
       - nest_visible=true
       - near_nest_activity=true
-      - cardinal_on_nest="uncertain"
+      - attending_parent_on_nest="uncertain"
       - direct_nest_interaction=false (explicit direct attacks are NEVER
         ambiguous — beak-in-cup must reach CRITICAL even if species is
         "unknown"; Codex P1 guardrail)
@@ -126,11 +134,12 @@ def is_ambiguous_occupied_cup(obs: NestObservation) -> bool:
         return False
     if not obs.near_nest_activity:
         return False
-    if obs.cardinal_on_nest != "uncertain":
+    if obs.attending_parent_on_nest != "uncertain":
         return False
     if obs.direct_nest_interaction:
         return False
+    named = named_threats()
     for s in species_list(obs):
-        if s in NAMED_THREATS:
+        if s in named:
             return False
     return True

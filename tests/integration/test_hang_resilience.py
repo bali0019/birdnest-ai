@@ -104,8 +104,8 @@ async def test_analyzer_timeout_does_not_hang(
         await asyncio.sleep(5)  # well past the 1 s bound; unreachable return
         from cardinal_nest_monitor.schema import NestObservation
         return NestObservation(
-            mother_cardinal_present="uncertain",
-            cardinal_on_nest="uncertain",
+            attending_parent_present="uncertain",
+            attending_parent_on_nest="uncertain",
             eggs_visible="uncertain",
             egg_count_estimate=None,
             nest_visible=False,

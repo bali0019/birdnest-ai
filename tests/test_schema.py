@@ -14,8 +14,8 @@ from cardinal_nest_monitor.schema import (
 
 def _minimal_obs_dict(**overrides):
     base = {
-        "mother_cardinal_present": "true",
-        "cardinal_on_nest": "true",
+        "attending_parent_present": "true",
+        "attending_parent_on_nest": "true",
         "eggs_visible": "false",
         "egg_count_estimate": None,
         "nest_visible": True,
@@ -33,7 +33,7 @@ def _minimal_obs_dict(**overrides):
 
 def test_minimal_valid_observation_parses():
     obs = NestObservation(**_minimal_obs_dict())
-    assert obs.mother_cardinal_present == "true"
+    assert obs.attending_parent_present == "true"
     assert obs.confidence == 0.9
     assert obs.threat_species_detected == []
 
@@ -47,7 +47,7 @@ def test_confidence_out_of_range_rejected():
 
 def test_bad_tristate_enum_rejected():
     with pytest.raises(ValidationError):
-        NestObservation(**_minimal_obs_dict(mother_cardinal_present="maybe"))
+        NestObservation(**_minimal_obs_dict(attending_parent_present="maybe"))
 
 
 def test_unknown_species_buckets_to_unknown():

@@ -13,7 +13,7 @@ The tool offers three modes:
   --egg-laying-started YYYY-MM-DD[THH:MM]   explicit local-time override
   --auto                                    infer from observation history
 
-Auto-inference scans confident `cardinal_on_nest` observations and looks
+Auto-inference scans confident `attending_parent_on_nest` observations and looks
 for the earliest 24h rolling window with ≥70% sitting ratio (the same
 threshold the live state.py egg_laying→incubation transition uses).
 
@@ -95,10 +95,10 @@ def _count_confident(
         # live transitions, and predictive alerts all agree on "confident".
         if not _row_passes_confidence(oj):
             continue
-        if '"cardinal_on_nest":"true"' in oj:
+        if '"attending_parent_on_nest":"true"' in oj:
             on_nest += 1
             total += 1
-        elif '"cardinal_on_nest":"false"' in oj:
+        elif '"attending_parent_on_nest":"false"' in oj:
             total += 1
         # "uncertain" doesn't count — same rule as state.py.
     return on_nest, total

@@ -14,7 +14,8 @@ from anthropic import AsyncAnthropic
 
 from cardinal_nest_monitor._image import downscale_jpeg_b64
 from cardinal_nest_monitor.config import get_settings
-from cardinal_nest_monitor.schema import PREFILTER_TOOL, PrefilterResult
+from cardinal_nest_monitor.schema import PrefilterResult, build_prefilter_tool
+from cardinal_nest_monitor.species import get_species_profile
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ async def prefilter(jpeg_bytes: bytes) -> PrefilterResult:
         }
     ]
 
+    prefilter_tool = build_prefilter_tool(get_species_profile())
     last_err: Exception | None = None
     for attempt in range(2):
         try:
@@ -96,7 +98,7 @@ async def prefilter(jpeg_bytes: bytes) -> PrefilterResult:
                 model=settings.prefilter_model,
                 max_tokens=200,
                 system=system,
-                tools=[PREFILTER_TOOL],
+                tools=[prefilter_tool],
                 tool_choice={"type": "tool", "name": "report_prefilter"},
                 messages=messages,
             )

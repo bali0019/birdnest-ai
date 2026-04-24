@@ -13,8 +13,8 @@ from cardinal_nest_monitor.state import StateStore
 
 def _make_obs(**kwargs) -> NestObservation:
     base = dict(
-        mother_cardinal_present="false",
-        cardinal_on_nest="false",
+        attending_parent_present="false",
+        attending_parent_on_nest="false",
         eggs_visible="false",
         egg_count_estimate=None,
         nest_visible=True,
@@ -75,8 +75,8 @@ def test_escalation_breakthrough_higher_fires(store):
     store.record(
         now - 300, False, None,
         _make_obs(
-            cardinal_on_nest="true",
-            mother_cardinal_present="true",
+            attending_parent_on_nest="true",
+            attending_parent_present="true",
             threat_species_detected=[],
             species_detected=["northern_cardinal"],
             direct_nest_interaction=False,
@@ -87,7 +87,7 @@ def test_escalation_breakthrough_higher_fires(store):
     store.record(
         now - 150, False, None,
         _make_obs(
-            cardinal_on_nest="false",
+            attending_parent_on_nest="false",
             threat_species_detected=[],
             species_detected=[],
             direct_nest_interaction=False,
@@ -116,8 +116,8 @@ def test_lower_severity_within_window_suppressed(store):
     store.record(
         now - 150, False, None,
         _make_obs(
-            cardinal_on_nest="true",
-            mother_cardinal_present="true",
+            attending_parent_on_nest="true",
+            attending_parent_present="true",
             threat_species_detected=[],
             species_detected=[],
             direct_nest_interaction=False,
@@ -128,7 +128,7 @@ def test_lower_severity_within_window_suppressed(store):
     store.record(
         now - 10, False, None,
         _make_obs(
-            cardinal_on_nest="false",
+            attending_parent_on_nest="false",
             threat_species_detected=[],
             species_detected=[],
             direct_nest_interaction=False,
@@ -252,8 +252,8 @@ def test_lifecycle_low_does_not_silence_mother_returned(store):
     store.record(
         now - 600, False, None,
         _make_obs(
-            cardinal_on_nest="true",
-            mother_cardinal_present="true",
+            attending_parent_on_nest="true",
+            attending_parent_present="true",
             threat_species_detected=[],
             species_detected=["northern_cardinal"],
             direct_nest_interaction=False,
@@ -262,8 +262,8 @@ def test_lifecycle_low_does_not_silence_mother_returned(store):
         None,
     )
     out = _make_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         threat_species_detected=[],
         species_detected=[],
         direct_nest_interaction=False,
@@ -285,8 +285,8 @@ def test_lifecycle_low_does_not_silence_mother_returned(store):
 
     # Now a "mom is back" snap.
     return_obs = _make_obs(
-        cardinal_on_nest="true",
-        mother_cardinal_present="true",
+        attending_parent_on_nest="true",
+        attending_parent_present="true",
         threat_species_detected=[],
         species_detected=["northern_cardinal"],
         direct_nest_interaction=False,
@@ -313,7 +313,7 @@ def test_mother_returned_self_cooldown_still_works(store):
     store.record(
         now - 600, False, None,
         _make_obs(
-            cardinal_on_nest="true", mother_cardinal_present="true",
+            attending_parent_on_nest="true", attending_parent_present="true",
             threat_species_detected=[], species_detected=["northern_cardinal"],
             direct_nest_interaction=False, summary="Mother on nest.",
         ),
@@ -322,7 +322,7 @@ def test_mother_returned_self_cooldown_still_works(store):
     store.record(
         now - 300, False, None,
         _make_obs(
-            cardinal_on_nest="false", mother_cardinal_present="false",
+            attending_parent_on_nest="false", attending_parent_present="false",
             threat_species_detected=[], species_detected=[],
             direct_nest_interaction=False, summary="Empty.",
         ),
@@ -341,7 +341,7 @@ def test_mother_returned_self_cooldown_still_works(store):
     store.record_alert(prior, ts=now - 10, evidence_dir=None)
 
     return_obs = _make_obs(
-        cardinal_on_nest="true", mother_cardinal_present="true",
+        attending_parent_on_nest="true", attending_parent_present="true",
         threat_species_detected=[], species_detected=["northern_cardinal"],
         direct_nest_interaction=False, summary="Mom back.",
     )

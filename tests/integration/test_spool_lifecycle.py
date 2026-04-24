@@ -311,7 +311,7 @@ async def test_combined_mode_end_to_end_matches_legacy_behavior(
 
     Intent: any refactor that subtly changes combined-mode state
     transitions — e.g. reordering store.record vs evaluate, tweaking the
-    confidence gate on cardinal_on_nest, or changing the absence-enter
+    confidence gate on attending_parent_on_nest, or changing the absence-enter
     threshold — will break BOTH this test AND the original in
     test_absence_cycle.py. The duplicated assertion is the parity contract:
     decoupling the downloader/analyzer services must NOT silently alter

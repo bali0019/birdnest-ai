@@ -125,7 +125,7 @@ def _lifecycle_event(
     # Deliberately gentle — a LOW celebration alert, not an alarm.
     if (
         state.lifecycle_stage == "building_nest"
-        and observation.cardinal_on_nest == "true"
+        and observation.attending_parent_on_nest == "true"
     ):
         sev = Severity.LOW
         # Rule-scoped cooldown (Codex P2 round 5). The previous
@@ -142,7 +142,7 @@ def _lifecycle_event(
                 title="🥚 Egg laying has begun",
                 summary="Female cardinal first observed sitting on the nest. Laying typically takes 3-4 days (one egg/day) before full incubation starts.",
                 species=[],
-                mother_present=observation.mother_cardinal_present,
+                mother_present=observation.attending_parent_present,
                 confidence=observation.confidence,
                 rule_id="egg_laying_begin",
             )
@@ -167,10 +167,10 @@ def _lifecycle_event(
             # Proper confidence filter — see state.py _row_passes_confidence.
             if not _row_passes_confidence(oj):
                 continue
-            if '"cardinal_on_nest":"true"' in oj:
+            if '"attending_parent_on_nest":"true"' in oj:
                 confident_on_nest += 1
                 confident_total += 1
-            elif '"cardinal_on_nest":"false"' in oj:
+            elif '"attending_parent_on_nest":"false"' in oj:
                 confident_total += 1
         if confident_total >= 24:
             ratio = confident_on_nest / confident_total
@@ -186,7 +186,7 @@ def _lifecycle_event(
                             f"countdown to hatch begins now."
                         ),
                         species=[],
-                        mother_present=observation.mother_cardinal_present,
+                        mother_present=observation.attending_parent_present,
                         confidence=observation.confidence,
                         rule_id="incubation_begin",
                     )
@@ -211,7 +211,7 @@ def _lifecycle_event(
                     title="🐣 Chicks hatched!",
                     summary="Chick presence confirmed by two independent observations. Feeding stage begins.",
                     species=[],
-                    mother_present=observation.mother_cardinal_present,
+                    mother_present=observation.attending_parent_present,
                     confidence=observation.confidence,
                     rule_id="hatch",
                 )
@@ -228,7 +228,7 @@ def _lifecycle_event(
             or (ts - state.last_threat_seen_ts) >= 48 * 3600
         )
         and state.hatch_detected_ts is not None
-        and observation.cardinal_on_nest != "true"  # confirm cardinal is absent NOW
+        and observation.attending_parent_on_nest != "true"  # confirm cardinal is absent NOW
     ):
         sev = Severity.LOW
         if not store.rule_cooldown_active("fledge", 24 * 3600, ts=ts):
@@ -237,7 +237,7 @@ def _lifecycle_event(
                 title="🦅 Chicks fledged!",
                 summary="No cardinal visits for 12+ hours after chick presence confirmed. Chicks have left the nest.",
                 species=[],
-                mother_present=observation.mother_cardinal_present,
+                mother_present=observation.attending_parent_present,
                 confidence=observation.confidence,
                 rule_id="fledge",
             )
@@ -292,7 +292,7 @@ def evaluate(
 
     # ── Ambiguous-occupied-cup path (2026-04-17) ──────────────────────
     # Must run BEFORE lifecycle_event (Codex P2): an ambiguous frame has
-    # cardinal_on_nest="uncertain" which lifecycle treats as "not true"
+    # attending_parent_on_nest="uncertain" which lifecycle treats as "not true"
     # and could leak into fledge-detection or chick-signal paths. Placing
     # the skip here prevents those false transitions. state.py::record
     # handles the 2-consecutive-frame soft-presence promotion; here we
@@ -304,7 +304,7 @@ def evaluate(
     if is_ambiguous_occupied_cup(observation):
         log.info(
             "ambig-cup: frame matches ambiguous-occupied-cup criteria "
-            "(nest_visible, near_nest, cardinal_on_nest=uncertain, no "
+            "(nest_visible, near_nest, attending_parent_on_nest=uncertain, no "
             "direct interaction, no named threat). Skipping MEDIUM/HIGH/"
             "lifecycle rules; state.py handles pending/soft-presence."
         )
@@ -338,7 +338,7 @@ def evaluate(
                 title="Direct nest interaction",
                 summary=observation.summary,
                 species=threats,
-                mother_present=observation.mother_cardinal_present,
+                mother_present=observation.attending_parent_present,
                 absence_seconds=state.absence_seconds(ts),
                 confidence=observation.confidence,
                 rule_id="direct_attack",
@@ -373,7 +373,7 @@ def evaluate(
                 title="Egg count dropped",
                 summary=observation.summary,
                 species=threats,
-                mother_present=observation.mother_cardinal_present,
+                mother_present=observation.attending_parent_present,
                 egg_count_before=state.last_known_egg_count,
                 egg_count_after=observation.egg_count_estimate,
                 confidence=observation.confidence,
@@ -427,7 +427,7 @@ def evaluate(
                 title="Predator near nest",
                 summary=observation.summary,
                 species=threats,
-                mother_present=observation.mother_cardinal_present,
+                mother_present=observation.attending_parent_present,
                 absence_seconds=absence,
                 confidence=observation.confidence,
                 rule_id="predator_absent",  # keep rule_id for cooldown/analytics continuity
@@ -446,7 +446,7 @@ def evaluate(
         and absence is not None
         and absence >= _LONG_ABSENCE_THRESHOLD
         and not threats
-        and observation.cardinal_on_nest != "true"
+        and observation.attending_parent_on_nest != "true"
         and not get_settings().in_quiet_hours(datetime.fromtimestamp(ts).time())
         and not _feeding_suppresses_medium(state, ts)
         # IR-mode suppression: when the camera is in IR (sunset → 23:00 quiet
@@ -475,7 +475,7 @@ def evaluate(
                 title=f"Mother away from nest for {bucket_mins}+ minutes",
                 summary=observation.summary,
                 species=[],
-                mother_present=observation.mother_cardinal_present,
+                mother_present=observation.attending_parent_present,
                 absence_seconds=absence,
                 confidence=observation.confidence,
                 rule_id="long_absence",
@@ -490,7 +490,7 @@ def evaluate(
     # this with absence_seconds=-300.
     if (
         not is_backfill
-        and observation.cardinal_on_nest == "true"
+        and observation.attending_parent_on_nest == "true"
         and state.in_absence
         and state.last_mother_seen_ts is not None
         # Belt-and-suspenders: even outside backfill mode, never fire if
@@ -510,7 +510,7 @@ def evaluate(
                 title="Mother returned to nest",
                 summary=observation.summary,
                 species=[],
-                mother_present=observation.mother_cardinal_present,
+                mother_present=observation.attending_parent_present,
                 absence_seconds=state.absence_seconds(ts),
                 confidence=observation.confidence,
                 rule_id="mother_returned",

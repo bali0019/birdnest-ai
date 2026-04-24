@@ -13,8 +13,8 @@ from cardinal_nest_monitor.state import StateStore
 
 def _make_obs(**kwargs) -> NestObservation:
     base = dict(
-        mother_cardinal_present="true",
-        cardinal_on_nest="true",
+        attending_parent_present="true",
+        attending_parent_on_nest="true",
         eggs_visible="false",
         egg_count_estimate=None,
         nest_visible=True,
@@ -52,8 +52,8 @@ def test_mother_brief_absence_no_alert(store):
     present = _make_obs()
     store.record(t0, False, None, present, None)
     absent = _make_obs(
-        mother_cardinal_present="false",
-        cardinal_on_nest="false",
+        attending_parent_present="false",
+        attending_parent_on_nest="false",
         species_detected=[],
         near_nest_activity=False,
         summary="Nest empty.",
@@ -66,15 +66,15 @@ def test_brown_thrasher_near_nest_mother_absent_HIGH(store):
     t0 = time.time()
     store.record(t0, False, None, _make_obs(), None)
     absent = _make_obs(
-        mother_cardinal_present="false",
-        cardinal_on_nest="false",
+        attending_parent_present="false",
+        attending_parent_on_nest="false",
         species_detected=[],
         summary="Nest empty.",
     )
     store.record(t0 + 130, False, None, absent, None)
     threat = _make_obs(
-        mother_cardinal_present="false",
-        cardinal_on_nest="false",
+        attending_parent_present="false",
+        attending_parent_on_nest="false",
         species_detected=["brown_thrasher"],
         threat_species_detected=["brown_thrasher"],
         near_nest_activity=True,
@@ -91,8 +91,8 @@ def test_brown_thrasher_near_nest_mother_absent_HIGH(store):
 def test_thrasher_direct_interaction_CRITICAL(store):
     t0 = time.time()
     threat = _make_obs(
-        mother_cardinal_present="false",
-        cardinal_on_nest="false",
+        attending_parent_present="false",
+        attending_parent_on_nest="false",
         species_detected=["brown_thrasher"],
         threat_species_detected=["brown_thrasher"],
         near_nest_activity=True,
@@ -119,14 +119,14 @@ def test_egg_count_drop_CRITICAL(store, monkeypatch):
 
     t0 = time.time()
     seed = _make_obs(
-        cardinal_on_nest="false",
+        attending_parent_on_nest="false",
         eggs_visible="true",
         egg_count_estimate=3,
         summary="Three eggs visible, mother away.",
     )
     store.record(t0, False, None, seed, None)
     drop = _make_obs(
-        cardinal_on_nest="false",
+        attending_parent_on_nest="false",
         eggs_visible="true",
         egg_count_estimate=2,
         summary="Only two eggs visible now.",
@@ -158,15 +158,15 @@ def test_squirrel_near_nest_HIGH(store):
     t0 = time.time()
     store.record(t0, False, None, _make_obs(), None)
     absent = _make_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         species_detected=[],
         summary="Empty.",
     )
     store.record(t0 + 130, False, None, absent, None)
     threat = _make_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         species_detected=["eastern_gray_squirrel"],
         threat_species_detected=["squirrel"],
         near_nest_activity=True,
@@ -215,8 +215,8 @@ def test_absence_5min_fires_MEDIUM(store):
     t0 = time.time()
     store.record(t0, False, None, _make_obs(), None)  # on nest
     absent = _make_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         species_detected=[],
         summary="Nest empty, mom foraging.",
     )
@@ -259,8 +259,8 @@ def test_long_absence_title_tracks_elapsed_bucket(store):
             t0 = time.time()
             s.record(t0, False, None, _make_obs(), None)  # on nest
             absent = _make_obs(
-                cardinal_on_nest="false",
-                mother_cardinal_present="false",
+                attending_parent_on_nest="false",
+                attending_parent_present="false",
                 species_detected=[],
                 summary="Mom foraging.",
             )
@@ -308,8 +308,8 @@ def test_threat_while_mom_present_fires_HIGH(store):
     t0 = time.time()
     # Mom currently on the nest, but a thrasher shows up near the bush.
     obs = _make_obs(
-        mother_cardinal_present="true",
-        cardinal_on_nest="true",
+        attending_parent_present="true",
+        attending_parent_on_nest="true",
         species_detected=["brown_thrasher"],
         threat_species_detected=["brown_thrasher"],
         near_nest_activity=True,
@@ -332,8 +332,8 @@ def test_smart_filter_yard_motion_no_alert(store):
         near_nest_activity=False,
         threat_species_detected=[],
         species_detected=["unknown_bird"],
-        cardinal_on_nest="uncertain",
-        mother_cardinal_present="uncertain",
+        attending_parent_on_nest="uncertain",
+        attending_parent_present="uncertain",
         summary="Something in yard, not near nest.",
     )
     state = store.record(t0, False, None, obs, None)
@@ -355,8 +355,8 @@ def test_medium_suppressed_during_quiet_hours(store, monkeypatch):
     t0 = time.time()
     store.record(t0, False, None, _make_obs(), None)
     absent = _make_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         species_detected=[],
         summary="Nest appears empty (IR image).",
         confidence=0.65,
@@ -378,8 +378,8 @@ def test_medium_fires_outside_quiet_hours(store, monkeypatch):
     t0 = time.time()
     store.record(t0, False, None, _make_obs(), None)
     absent = _make_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         species_detected=[],
         summary="Nest empty — mom foraging.",
     )
@@ -435,8 +435,8 @@ def test_medium_suppressed_when_image_is_ir_outside_quiet_hours(store, monkeypat
     t0 = time.time()
     store.record(t0, False, None, _make_obs(), None)
     ir_uncertain = _make_obs(
-        cardinal_on_nest="uncertain",
-        mother_cardinal_present="uncertain",
+        attending_parent_on_nest="uncertain",
+        attending_parent_present="uncertain",
         species_detected=["unknown bird"],
         threat_species_detected=[],
         near_nest_activity=True,
@@ -469,7 +469,7 @@ def test_backfill_snap_does_not_fire_mother_returned_with_negative_absence(store
     # Simulate the live snap that flipped in_absence=True at t_now-100.
     store.record(t_now - 400, False, None, _make_obs(), None)  # she was here
     out = _make_obs(
-        cardinal_on_nest="false", mother_cardinal_present="false",
+        attending_parent_on_nest="false", attending_parent_present="false",
         species_detected=[], summary="Nest empty.",
     )
     live_state = store.record(t_now - 100, False, None, out, None)
@@ -477,7 +477,7 @@ def test_backfill_snap_does_not_fire_mother_returned_with_negative_absence(store
 
     # Now a STALE backfill snap from t_now-300 (BEFORE the absence started).
     stale_ts = t_now - 300
-    on_nest = _make_obs(cardinal_on_nest="true", summary="Old: she was here.")
+    on_nest = _make_obs(attending_parent_on_nest="true", summary="Old: she was here.")
     pre_state = store.get_state()
 
     # Without is_backfill=True, the old code would fire mother_returned with
@@ -502,7 +502,7 @@ def test_backfill_snap_does_not_fire_long_absence(store):
     store.record(t_now - 1000, False, None, _make_obs(), None)
     # Live snap: she's gone, MEDIUM-eligible.
     out = _make_obs(
-        cardinal_on_nest="false", mother_cardinal_present="false",
+        attending_parent_on_nest="false", attending_parent_present="false",
         species_detected=[], summary="Nest empty.",
     )
     store.record(t_now, False, None, out, None)
@@ -524,7 +524,7 @@ def test_backfill_snap_still_fires_direct_attack_threat(store):
     pre_state = store.get_state()
 
     threat = _make_obs(
-        cardinal_on_nest="false", mother_cardinal_present="false",
+        attending_parent_on_nest="false", attending_parent_present="false",
         threat_species_detected=["brown_thrasher"],
         species_detected=["brown_thrasher"],
         near_nest_activity=True,
@@ -545,7 +545,7 @@ def test_backfill_snap_still_fires_predator_near_nest(store):
     store.record(t_now - 1000, False, None, _make_obs(), None)
     pre_state = store.get_state()
     threat = _make_obs(
-        cardinal_on_nest="false", mother_cardinal_present="false",
+        attending_parent_on_nest="false", attending_parent_present="false",
         threat_species_detected=["brown_thrasher"],
         species_detected=["brown_thrasher"],
         near_nest_activity=True,
@@ -566,7 +566,7 @@ def test_negative_absence_guard_in_mother_returned_belt_and_suspenders(store):
     t_now = time.time()
     store.record(t_now - 100, False, None, _make_obs(), None)  # she's here at t-100
     out = _make_obs(
-        cardinal_on_nest="false", mother_cardinal_present="false",
+        attending_parent_on_nest="false", attending_parent_present="false",
         species_detected=[], summary="Nest empty.",
     )
     state_after_absence = store.record(t_now, False, None, out, None)
@@ -576,7 +576,7 @@ def test_negative_absence_guard_in_mother_returned_belt_and_suspenders(store):
         (t_now,),
     )
     pre_state = store.get_state()
-    on_nest = _make_obs(cardinal_on_nest="true", summary="snap.")
+    on_nest = _make_obs(attending_parent_on_nest="true", summary="snap.")
     # ts < state.last_mother_seen_ts → would yield negative absence
     decision = evaluate(on_nest, pre_state, store, t_now - 500, is_backfill=False)
     assert decision is None or decision.rule_id != "mother_returned"
@@ -599,14 +599,14 @@ def test_egg_loss_silent_when_flag_off(store, monkeypatch):
 
     t0 = time.time()
     seed = _make_obs(
-        cardinal_on_nest="false",
+        attending_parent_on_nest="false",
         eggs_visible="true",
         egg_count_estimate=2,
         summary="Two eggs visible.",
     )
     store.record(t0, False, None, seed, None)
     drop = _make_obs(
-        cardinal_on_nest="false",
+        attending_parent_on_nest="false",
         eggs_visible="true",
         egg_count_estimate=1,
         summary="One egg visible — other occluded by rim.",
@@ -628,11 +628,11 @@ def test_egg_loss_still_fires_when_flag_on_future_camera(store, monkeypatch):
 
     t0 = time.time()
     store.record(t0, False, None, _make_obs(
-        cardinal_on_nest="false", eggs_visible="true", egg_count_estimate=3,
+        attending_parent_on_nest="false", eggs_visible="true", egg_count_estimate=3,
         summary="Three eggs visible.",
     ), None)
     drop = _make_obs(
-        cardinal_on_nest="false", eggs_visible="true", egg_count_estimate=2,
+        attending_parent_on_nest="false", eggs_visible="true", egg_count_estimate=2,
         summary="Two eggs visible now.",
     )
     pre_state = store.get_state()
@@ -655,8 +655,8 @@ def test_direct_nest_interaction_without_threat_species_does_not_alert(store):
     """
     t0 = time.time()
     cardinal_tending = _make_obs(
-        cardinal_on_nest="false",  # she's leaning over, not sitting
-        mother_cardinal_present="true",
+        attending_parent_on_nest="false",  # she's leaning over, not sitting
+        attending_parent_present="true",
         species_detected=["female northern cardinal"],
         threat_species_detected=[],  # key: no threat
         near_nest_activity=False,
@@ -680,8 +680,8 @@ def test_direct_nest_interaction_with_thrasher_still_fires_critical(store):
     """
     t0 = time.time()
     attack = _make_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         species_detected=["brown thrasher"],
         threat_species_detected=["brown_thrasher"],
         near_nest_activity=True,
@@ -703,8 +703,8 @@ def test_direct_nest_interaction_with_unknown_threat_still_fires(store):
     """
     t0 = time.time()
     attack = _make_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         species_detected=["unknown bird"],
         threat_species_detected=["unknown"],
         near_nest_activity=True,
@@ -725,8 +725,8 @@ def _ambig_obs(**overrides) -> NestObservation:
     """Baseline ambiguous-occupied-cup observation: bird at cup, species
     unknown. Matches the dominant 2026-04-17 false-positive pattern."""
     base = dict(
-        mother_cardinal_present="uncertain",
-        cardinal_on_nest="uncertain",
+        attending_parent_present="uncertain",
+        attending_parent_on_nest="uncertain",
         eggs_visible="false",
         egg_count_estimate=None,
         nest_visible=True,
@@ -749,11 +749,11 @@ def test_is_ambiguous_occupied_cup_helper():
     # Positive: canonical ambig frame
     assert is_ambiguous_occupied_cup(_ambig_obs()) is True
 
-    # Negative: confirmed cardinal_on_nest=true
-    assert is_ambiguous_occupied_cup(_ambig_obs(cardinal_on_nest="true")) is False
+    # Negative: confirmed attending_parent_on_nest=true
+    assert is_ambiguous_occupied_cup(_ambig_obs(attending_parent_on_nest="true")) is False
 
-    # Negative: confirmed cardinal_on_nest=false (clearly empty)
-    assert is_ambiguous_occupied_cup(_ambig_obs(cardinal_on_nest="false")) is False
+    # Negative: confirmed attending_parent_on_nest=false (clearly empty)
+    assert is_ambiguous_occupied_cup(_ambig_obs(attending_parent_on_nest="false")) is False
 
     # Negative: nest not visible
     assert is_ambiguous_occupied_cup(_ambig_obs(nest_visible=False)) is False
@@ -786,8 +786,8 @@ def test_first_ambig_frame_does_not_fire_alert(store):
     # Seed: mom was here 10 min ago, then she "left" (so in_absence=True).
     store.record(t0 - 600, False, None, _make_obs(), None)
     out = _make_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         species_detected=[],
         summary="Nest empty.",
     )
@@ -809,8 +809,8 @@ def test_second_consecutive_ambig_frame_promotes_to_soft_presence(store):
     t0 = time.time()
     store.record(t0 - 600, False, None, _make_obs(), None)
     out = _make_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         species_detected=[],
         summary="Nest empty.",
     )
@@ -870,8 +870,8 @@ def test_named_thrasher_still_fires_immediately_on_single_frame(store):
     # Seed: mom away.
     store.record(t0 - 600, False, None, _make_obs(), None)
     out = _make_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         species_detected=[],
         summary="Nest empty.",
     )
@@ -879,8 +879,8 @@ def test_named_thrasher_still_fires_immediately_on_single_frame(store):
 
     # Single-frame thrasher at nest.
     threat = _make_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         species_detected=["brown thrasher"],
         threat_species_detected=["brown_thrasher"],
         near_nest_activity=True,
@@ -906,8 +906,8 @@ def test_ambig_then_unambiguous_cardinal_clears_pending(store):
     # Next frame: clear cardinal on nest.
     t1 = t0 + 60
     clear_cardinal = _make_obs(
-        cardinal_on_nest="true",
-        mother_cardinal_present="true",
+        attending_parent_on_nest="true",
+        attending_parent_present="true",
         species_detected=["northern_cardinal"],
         threat_species_detected=[],
         near_nest_activity=False,
@@ -932,14 +932,14 @@ def test_unknown_species_direct_attack_still_fires_critical(store):
     from cardinal_nest_monitor.events import is_ambiguous_occupied_cup
 
     t0 = time.time()
-    # Frame: cardinal_on_nest=uncertain (can't ID), threat_species=unknown,
+    # Frame: attending_parent_on_nest=uncertain (can't ID), threat_species=unknown,
     # near_nest=true, AND direct_nest_interaction=true. Without the exclusion
     # in is_ambiguous_occupied_cup, this would match ambig predicate and
     # get suppressed. With the fix, direct_nest_interaction=true kicks it
     # out of the ambig predicate and into rule 1.
     attack = _make_obs(
-        cardinal_on_nest="uncertain",
-        mother_cardinal_present="uncertain",
+        attending_parent_on_nest="uncertain",
+        attending_parent_present="uncertain",
         species_detected=["unknown bird"],
         threat_species_detected=["unknown"],
         near_nest_activity=True,
@@ -972,7 +972,7 @@ def test_ambig_frame_in_feeding_stage_does_not_trigger_lifecycle(store, monkeypa
     last confirmed sighting 13h ago (past the 12h fledge threshold), no
     threats in 48h. An ambig frame now would — without the reorder —
     trigger the fledge transition check inside _lifecycle_event because
-    cardinal_on_nest != 'true' and all fledge preconditions are met.
+    attending_parent_on_nest != 'true' and all fledge preconditions are met.
     With the reorder, the ambig check fires first and returns None.
     """
     from cardinal_nest_monitor.config import get_settings

@@ -110,7 +110,7 @@ def test_verify_alert_forwards_is_backfill_to_evaluate():
     from cardinal_nest_monitor import verifier as verifier_mod
 
     sonnet_obs = NestObservation(
-        mother_cardinal_present="false", cardinal_on_nest="false",
+        attending_parent_present="false", attending_parent_on_nest="false",
         eggs_visible="false", egg_count_estimate=None,
         nest_visible=True, nest_disturbed="false",
         species_detected=["brown_thrasher"],
@@ -156,7 +156,7 @@ def test_verify_alert_default_is_backfill_false():
     from cardinal_nest_monitor import verifier as verifier_mod
 
     sonnet_obs = NestObservation(
-        mother_cardinal_present="false", cardinal_on_nest="false",
+        attending_parent_present="false", attending_parent_on_nest="false",
         eggs_visible="false", egg_count_estimate=None,
         nest_visible=True, nest_disturbed="false",
         species_detected=["brown_thrasher"],
@@ -198,7 +198,7 @@ def test_is_cardinal_positive_no_threat_helper():
 
     def _obs(**overrides):
         base = dict(
-            mother_cardinal_present="true", cardinal_on_nest="true",
+            attending_parent_present="true", attending_parent_on_nest="true",
             eggs_visible="false", egg_count_estimate=None,
             nest_visible=True, nest_disturbed="false",
             species_detected=[], threat_species_detected=[],
@@ -252,7 +252,7 @@ def test_cardinal_positive_no_threat_opus_suppresses_sonnet_high():
     from cardinal_nest_monitor import verifier as verifier_mod
 
     sonnet_obs = NestObservation(
-        mother_cardinal_present="uncertain", cardinal_on_nest="uncertain",
+        attending_parent_present="uncertain", attending_parent_on_nest="uncertain",
         eggs_visible="false", egg_count_estimate=None,
         nest_visible=True, nest_disturbed="false",
         species_detected=["unknown brownish bird"],
@@ -262,7 +262,7 @@ def test_cardinal_positive_no_threat_opus_suppresses_sonnet_high():
     )
     # What Opus actually returned (from today's verification.json):
     opus_obs = NestObservation(
-        mother_cardinal_present="true", cardinal_on_nest="false",
+        attending_parent_present="true", attending_parent_on_nest="false",
         eggs_visible="uncertain", egg_count_estimate=None,
         nest_visible=True, nest_disturbed="false",
         species_detected=["female northern cardinal"],
@@ -305,7 +305,7 @@ def test_cardinal_positive_with_thrasher_does_not_override():
     from cardinal_nest_monitor import verifier as verifier_mod
 
     sonnet_obs = NestObservation(
-        mother_cardinal_present="false", cardinal_on_nest="false",
+        attending_parent_present="false", attending_parent_on_nest="false",
         eggs_visible="false", egg_count_estimate=None,
         nest_visible=True, nest_disturbed="false",
         species_detected=["brown thrasher"],
@@ -314,7 +314,7 @@ def test_cardinal_positive_with_thrasher_does_not_override():
         confidence=0.9, summary="Thrasher at cup.",
     )
     opus_obs = NestObservation(
-        mother_cardinal_present="true", cardinal_on_nest="false",
+        attending_parent_present="true", attending_parent_on_nest="false",
         eggs_visible="false", egg_count_estimate=None,
         nest_visible=True, nest_disturbed="false",
         species_detected=["female northern cardinal", "brown thrasher"],
@@ -355,7 +355,7 @@ def test_cardinal_override_suppresses_critical_too():
     from cardinal_nest_monitor import verifier as verifier_mod
 
     sonnet_obs = NestObservation(
-        mother_cardinal_present="uncertain", cardinal_on_nest="uncertain",
+        attending_parent_present="uncertain", attending_parent_on_nest="uncertain",
         eggs_visible="false", egg_count_estimate=None,
         nest_visible=True, nest_disturbed="false",
         species_detected=["unknown bird"],
@@ -364,7 +364,7 @@ def test_cardinal_override_suppresses_critical_too():
         confidence=0.72, summary="Unknown bird with beak in cup.",
     )
     opus_obs = NestObservation(
-        mother_cardinal_present="true", cardinal_on_nest="true",
+        attending_parent_present="true", attending_parent_on_nest="true",
         eggs_visible="false", egg_count_estimate=None,
         nest_visible=True, nest_disturbed="false",
         species_detected=["female northern cardinal"],
@@ -402,7 +402,7 @@ def test_finalize_verification_suppresses_cardinal_positive_no_threat():
     from cardinal_nest_monitor.verifier import finalize_verification
 
     opus_obs = NestObservation(
-        mother_cardinal_present="true", cardinal_on_nest="false",
+        attending_parent_present="true", attending_parent_on_nest="false",
         eggs_visible="false", egg_count_estimate=None,
         nest_visible=True, nest_disturbed="false",
         species_detected=["female northern cardinal"],
@@ -424,7 +424,7 @@ def test_finalize_verification_forwards_is_backfill():
     from cardinal_nest_monitor import verifier as verifier_mod
 
     opus_obs = NestObservation(
-        mother_cardinal_present="false", cardinal_on_nest="false",
+        attending_parent_present="false", attending_parent_on_nest="false",
         eggs_visible="false", egg_count_estimate=None,
         nest_visible=True, nest_disturbed="false",
         species_detected=["brown thrasher"],

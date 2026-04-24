@@ -74,8 +74,8 @@ def test_record_sets_absence_started_ts_on_flip(store):
 
     def _obs(**kw):
         base = dict(
-            mother_cardinal_present="true",
-            cardinal_on_nest="true",
+            attending_parent_present="true",
+            attending_parent_on_nest="true",
             eggs_visible="false",
             egg_count_estimate=None,
             nest_visible=True,
@@ -95,8 +95,8 @@ def test_record_sets_absence_started_ts_on_flip(store):
     store.record(t0, False, None, _obs(), None)
     # 130s later, she's gone — triggers the absence flip (threshold is 120s).
     absent = _obs(
-        mother_cardinal_present="false",
-        cardinal_on_nest="false",
+        attending_parent_present="false",
+        attending_parent_on_nest="false",
         species_detected=[],
         summary="Empty nest.",
     )
@@ -111,8 +111,8 @@ def test_record_clears_absence_started_ts_on_return(store):
 
     def _obs(**kw):
         base = dict(
-            mother_cardinal_present="true",
-            cardinal_on_nest="true",
+            attending_parent_present="true",
+            attending_parent_on_nest="true",
             eggs_visible="false",
             egg_count_estimate=None,
             nest_visible=True,
@@ -130,8 +130,8 @@ def test_record_clears_absence_started_ts_on_return(store):
     t0 = time.time()
     store.record(t0, False, None, _obs(), None)
     absent = _obs(
-        mother_cardinal_present="false",
-        cardinal_on_nest="false",
+        attending_parent_present="false",
+        attending_parent_on_nest="false",
         species_detected=[],
         summary="Nest empty.",
     )
@@ -464,8 +464,8 @@ async def test_arm_session_burst_arms_when_fresh_observation_confirms_absence(
     # production does.
     def _obs(**kw):
         base = dict(
-            mother_cardinal_present="false",
-            cardinal_on_nest="false",
+            attending_parent_present="false",
+            attending_parent_on_nest="false",
             eggs_visible="false",
             egg_count_estimate=None,
             nest_visible=True,
@@ -482,7 +482,7 @@ async def test_arm_session_burst_arms_when_fresh_observation_confirms_absence(
 
     # Need two records to cross the 120s in_absence threshold.
     store.record(startup_wall_ts + 0.1, False, None, _obs(
-        mother_cardinal_present="true", cardinal_on_nest="true",
+        attending_parent_present="true", attending_parent_on_nest="true",
         species_detected=["northern_cardinal"], summary="On nest.",
     ), None)
     state_after = store.record(
@@ -512,8 +512,8 @@ async def test_arm_session_burst_does_not_arm_when_mom_on_nest(store, settings):
     startup_wall_ts = time.time()
 
     on_nest = NestObservation(
-        mother_cardinal_present="true",
-        cardinal_on_nest="true",
+        attending_parent_present="true",
+        attending_parent_on_nest="true",
         eggs_visible="false",
         egg_count_estimate=None,
         nest_visible=True,

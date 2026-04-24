@@ -14,7 +14,8 @@ from anthropic import AsyncAnthropic
 
 from cardinal_nest_monitor._image import downscale_jpeg_b64, prepare_multi_image
 from cardinal_nest_monitor.config import get_settings
-from cardinal_nest_monitor.schema import NEST_TOOL, NestObservation
+from cardinal_nest_monitor.schema import NestObservation, build_nest_tool
+from cardinal_nest_monitor.species import get_species_profile
 
 log = logging.getLogger(__name__)
 
@@ -70,11 +71,11 @@ Also possible:
   • House Finch — small, streaky brown; NOT a cardinal but ALSO not a threat. Treat as unknown/neutral, not a threat.
 
 == Decision rules ==
-• If you can CLEARLY see a red/pink CREST on the bird's head → it IS the female cardinal; report cardinal_on_nest or mother_cardinal_present accordingly and DO NOT list any threat species from this bird.
+• If you can CLEARLY see a red/pink CREST on the bird's head → it IS the female cardinal; report attending_parent_on_nest or attending_parent_present accordingly and DO NOT list any threat species from this bird.
 • If you see a LONG tail + STREAKED breast + NO crest → it's a Brown Thrasher — report it in threat_species_detected.
 • If you see YELLOW eyes on a bird → very likely a thrasher, NOT a cardinal.
 • If you see a non-cardinal bird or animal at/on the nest but can't identify the species → species_detected="unknown bird/animal" AND threat_species_detected=["unknown"]. Do NOT guess at "brown_thrasher" unless you can see thrasher-specific features.
-• If the bird's head/face is hidden and you can't verify the crest or other distinctive features → cardinal_on_nest="uncertain" AND do NOT report a confident threat species. Use "uncertain" liberally — the downstream system re-analyzes uncertain frames at higher cadence.
+• If the bird's head/face is hidden and you can't verify the crest or other distinctive features → attending_parent_on_nest="uncertain" AND do NOT report a confident threat species. Use "uncertain" liberally — the downstream system re-analyzes uncertain frames at higher cadence.
 
 == direct_nest_interaction — highest severity, use carefully ==
 Report direct_nest_interaction=true ONLY when you can UNAMBIGUOUSLY see a non-cardinal bird or animal physically touching, reaching into, or pulling from the nest cup — e.g. a beak clearly inside the cup, a foot gripping the rim, or a body visibly pressed into the nest material. This triggers a CRITICAL "go-outside-right-now" alert.
@@ -103,8 +104,8 @@ Calibration table:
 Blink IR images are GRAYSCALE with a slight purple/green cast. Key properties:
 - The cardinal's brown/tan plumage becomes indistinguishable from nest straw in IR.
 - You CANNOT reliably determine cardinal presence/absence from IR alone.
-- DO NOT report cardinal_on_nest="false" on IR images unless the nest cup is CLEARLY empty (visible bowl interior with no mass filling it).
-- Default to cardinal_on_nest="uncertain" and mother_cardinal_present="uncertain" on any image that appears to be infrared/night mode.
+- DO NOT report attending_parent_on_nest="false" on IR images unless the nest cup is CLEARLY empty (visible bowl interior with no mass filling it).
+- Default to attending_parent_on_nest="uncertain" and attending_parent_present="uncertain" on any image that appears to be infrared/night mode.
 - Confidence on IR images should be 0.40-0.55 (below the action threshold) unless you can clearly distinguish a specific bird species by shape/posture.
 - A dark mass filling the nest cup in IR is LIKELY the cardinal — do not call it empty.
 
@@ -126,23 +127,23 @@ Older nestlings (day 4-10):
   • May be multiple chicks visible at once
 
 If you see pink/red flesh, sparse down, multiple small bodies, or small heads with gaping mouths protruding from the cup:
-  • chicks_visible = "true"
-  • chick_count_estimate = your best count (may be occluded by mom or foliage)
+  • young_visible = "true"
+  • young_count_estimate = your best count (may be occluded by mom or foliage)
 
 If you see ONLY a clear, smooth cup interior with NO pink bodies, NO beaks, NO movement:
-  • chicks_visible = "false"
+  • young_visible = "false"
 
 If the image is too obscured to tell (IR, heavy foliage, mom covering everything):
-  • chicks_visible = "uncertain"
+  • young_visible = "uncertain"
 
 == Feeding behavior ==
 
-Set mother_feeding_chicks = true ONLY when you can clearly identify a food item that is EXTERNALLY VISIBLE and protruding from the beak:
+Set attending_parent_feeding_young = true ONLY when you can clearly identify a food item that is EXTERNALLY VISIBLE and protruding from the beak:
   • A caterpillar, worm, or insect sticking out (legs, body, or wings visible)
   • A berry or seed visibly held between the mandibles and protruding
   • A clearly-shaped prey item hanging from the beak
 
-Set mother_feeding_chicks = false in ALL other cases:
+Set attending_parent_feeding_young = false in ALL other cases:
   • Beak closed → false
   • Beak open showing pink/orange INSIDE the mouth (this is normal — it is not food) → false
   • Beak appears to have a "bulge" but no identifiable shape → false
@@ -155,7 +156,7 @@ Feeding trips are short (30-120 seconds at the nest) and frequent (every 10-30 m
 == Narrow cardinal prior — READ CAREFULLY ==
 This camera watches a Northern Cardinal nest; the nesting female visits the cup many times a day and her back, wing, and tail are often in view from behind or the side while she settles or broods. The crest often lies flat on the head when she's on the nest, so "no crest visible" is NOT sufficient reason to reject a cardinal ID.
 
-When ALL of the following are true, treat the bird as the female cardinal (cardinal_on_nest="true" at confidence 0.55–0.65) even if the crest, face, and beak are not visible:
+When ALL of the following are true, treat the bird as the female cardinal (attending_parent_on_nest="true" at confidence 0.55–0.65) even if the crest, face, and beak are not visible:
   A. The whole body profile of a small compact songbird (~21 cm) is clearly visible sitting IN or ON the nest cup — not just a fragment behind foliage.
   B. You can see at least ONE of these cardinal plumage features unambiguously:
        • A warm REDDISH, ORANGE, or RUSTY-PINK tint on the wing, rump, or tail (the most reliable single cue).
@@ -167,7 +168,7 @@ When ALL of the following are true, treat the bird as the female cardinal (cardi
 When this prior fires, clamp confidence to the range 0.55–0.65 — never higher from this reasoning alone. If other cues (crest clearly visible, orange beak clearly visible) push toward stronger ID, confidence may go higher but that is not this prior.
 
 DO NOT apply this prior when:
-  • The body is so obscured by foliage/branches that you can only see a fragment (a patch of brown/tan without a recognizable body silhouette). In that case → cardinal_on_nest="uncertain".
+  • The body is so obscured by foliage/branches that you can only see a fragment (a patch of brown/tan without a recognizable body silhouette). In that case → attending_parent_on_nest="uncertain".
   • The bird's body shape or size isn't clearly consistent with a small songbird (e.g. larger bird, a mammal shape, an unclear blob).
   • You can see ANY thrasher feature.
   • The frame is infrared/night mode (the IR rules above always win — stay "uncertain" there).
@@ -178,7 +179,7 @@ When in doubt between this prior and "uncertain", choose "uncertain". The prior 
 The user prefers FALSE ALARMS over MISSED THREATS. Decision rules:
   - Bird at nest + red crest clearly visible → female cardinal, NOT a threat, no species in threat_species_detected.
   - Bird at nest + thrasher features clearly visible (no crest, streaked breast, long tail, yellow eye) → threat_species_detected=["brown_thrasher"].
-  - Bird at nest + narrow-cardinal-prior conditions A+B+C all met → cardinal_on_nest="true" at confidence 0.55–0.65, no threat species.
+  - Bird at nest + narrow-cardinal-prior conditions A+B+C all met → attending_parent_on_nest="true" at confidence 0.55–0.65, no threat species.
   - Bird at nest + species ambiguous (prior conditions not met, no clearly-visible crest OR thrasher features) → threat_species_detected=["unknown"], confidence reflects scene-reliability (usually 0.80+), near_nest_activity=true, direct_nest_interaction=false unless clearly reaching into cup.
   - No bird visible at nest → empty nest observation, no threats.
 
@@ -273,12 +274,13 @@ async def analyze(
             # budget used by both this inner bound AND main.py's outer
             # bound around analyze(); tests patch the constant so both
             # shrink together. See CLAUDE.md §19.
+            nest_tool = build_nest_tool(get_species_profile())
             response = await asyncio.wait_for(
                 client.messages.create(
                     model=model,
                     max_tokens=1024,
                     system=system,
-                    tools=[NEST_TOOL],
+                    tools=[nest_tool],
                     tool_choice={"type": "tool", "name": "report_nest"},
                     messages=messages,
                 ),

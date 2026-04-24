@@ -41,8 +41,8 @@ def _pipeline(store, notifier, evidence):
 
 def _obs(**kwargs) -> NestObservation:
     base = dict(
-        mother_cardinal_present="true",
-        cardinal_on_nest="true",
+        attending_parent_present="true",
+        attending_parent_on_nest="true",
         eggs_visible="false",
         egg_count_estimate=None,
         nest_visible=True,
@@ -51,9 +51,9 @@ def _obs(**kwargs) -> NestObservation:
         threat_species_detected=[],
         near_nest_activity=False,
         direct_nest_interaction=False,
-        chicks_visible="uncertain",
-        chick_count_estimate=None,
-        mother_feeding_chicks=False,
+        young_visible="uncertain",
+        young_count_estimate=None,
+        attending_parent_feeding_young=False,
         confidence=0.9,
         summary="Mom on nest.",
     )
@@ -83,11 +83,11 @@ async def test_lifecycle_off_by_default_behaves_like_today(
     send_alert_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(notifier, "send_alert", send_alert_mock)
 
-    # Even if the analyzer returned chicks_visible=true, no transition.
+    # Even if the analyzer returned young_visible=true, no transition.
     analyze_mock = AsyncMock(return_value=_obs(
-        cardinal_on_nest="false",
-        chicks_visible="true",
-        chick_count_estimate=2,
+        attending_parent_on_nest="false",
+        young_visible="true",
+        young_count_estimate=2,
     ))
     monkeypatch.setattr(analyzer_mod, "analyze", analyze_mock)
 
@@ -126,12 +126,12 @@ async def test_hatch_alert_fires_through_pipeline_after_confirmation(
 
     monkeypatch.setattr(notifier, "send_alert", _capture)
 
-    # Mock analyzer to return chicks_visible=true on every snap
+    # Mock analyzer to return young_visible=true on every snap
     analyze_mock = AsyncMock(return_value=_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
-        chicks_visible="true",
-        chick_count_estimate=3,
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
+        young_visible="true",
+        young_count_estimate=3,
         summary="Three chicks begging in nest.",
     ))
     monkeypatch.setattr(analyzer_mod, "analyze", analyze_mock)
@@ -168,23 +168,23 @@ async def test_feeding_stage_suppresses_medium_absence_alerts(
 ):
     """Once in feeding stage, a recent feeding event should suppress
     MEDIUM long_absence alerts (she's expected to be away feeding)."""
-    # Seed feeding stage with 2 confirming chicks_visible=true sightings at
-    # ≥0.75 confidence (tightened 2026-04-17: mother_feeding_chicks alone
-    # no longer advances). mother_feeding_chicks=true still records the
+    # Seed feeding stage with 2 confirming young_visible=true sightings at
+    # ≥0.75 confidence (tightened 2026-04-17: attending_parent_feeding_young alone
+    # no longer advances). attending_parent_feeding_young=true still records the
     # feeding event used by the 30-min suppression path.
     t0 = time.time() - 7200
     store.record(t0 - 300, False, None, _obs(
-        cardinal_on_nest="true",
-        mother_feeding_chicks=True,
-        chicks_visible="true",
-        chick_count_estimate=2,
+        attending_parent_on_nest="true",
+        attending_parent_feeding_young=True,
+        young_visible="true",
+        young_count_estimate=2,
         confidence=0.85,
     ), None)
     store.record(t0, False, None, _obs(
-        cardinal_on_nest="true",
-        mother_feeding_chicks=True,
-        chicks_visible="true",
-        chick_count_estimate=2,
+        attending_parent_on_nest="true",
+        attending_parent_feeding_young=True,
+        young_visible="true",
+        young_count_estimate=2,
         confidence=0.85,
     ), None)
 
@@ -204,9 +204,9 @@ async def test_feeding_stage_suppresses_medium_absence_alerts(
 
     # Mock analyzer to say mom is gone again (another foraging trip)
     analyze_mock = AsyncMock(return_value=_obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
-        chicks_visible="uncertain",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
+        young_visible="uncertain",
         species_detected=[],
     ))
     monkeypatch.setattr(analyzer_mod, "analyze", analyze_mock)
@@ -241,14 +241,14 @@ async def test_predation_during_feeding_stage_still_critical(
     # Seed feeding stage — 2 confirming sightings required
     t0 = time.time() - 3600
     store.record(t0 - 300, False, None, _obs(
-        cardinal_on_nest="false",
-        chicks_visible="true",
-        chick_count_estimate=2,
+        attending_parent_on_nest="false",
+        young_visible="true",
+        young_count_estimate=2,
     ), None)
     store.record(t0, False, None, _obs(
-        cardinal_on_nest="false",
-        chicks_visible="true",
-        chick_count_estimate=2,
+        attending_parent_on_nest="false",
+        young_visible="true",
+        young_count_estimate=2,
     ), None)
     assert store.get_state().lifecycle_stage == "feeding"
 
@@ -307,19 +307,19 @@ async def test_egg_laying_to_incubation_cycle_via_pipeline(
     )
 
     # Backfill 30 observations spanning the 25h window, 24 (80%) with
-    # cardinal_on_nest="true" at confidence 0.85 and 6 with "false".
+    # attending_parent_on_nest="true" at confidence 0.85 and 6 with "false".
     # events.py::_lifecycle_event does cheap string matching on the JSON
-    # ('"cardinal_on_nest":"true"' / '"confidence":') so we reuse the
+    # ('"attending_parent_on_nest":"true"' / '"confidence":') so we reuse the
     # analyzer's canonical serialization via NestObservation.model_dump_json().
     on_nest_obs = _obs(
-        cardinal_on_nest="true",
-        mother_cardinal_present="true",
+        attending_parent_on_nest="true",
+        attending_parent_present="true",
         confidence=0.85,
         summary="Female on nest.",
     ).model_dump_json()
     off_nest_obs = _obs(
-        cardinal_on_nest="false",
-        mother_cardinal_present="false",
+        attending_parent_on_nest="false",
+        attending_parent_present="false",
         confidence=0.85,
         summary="Brief absence.",
         species_detected=[],
@@ -357,8 +357,8 @@ async def test_egg_laying_to_incubation_cycle_via_pipeline(
 
     # Mock the analyzer: the "now" snap shows the cardinal still sitting.
     analyze_mock = AsyncMock(return_value=_obs(
-        cardinal_on_nest="true",
-        mother_cardinal_present="true",
+        attending_parent_on_nest="true",
+        attending_parent_present="true",
         confidence=0.9,
         summary="Cardinal sustained on nest.",
     ))

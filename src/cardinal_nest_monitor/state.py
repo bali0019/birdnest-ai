@@ -31,7 +31,6 @@ from cardinal_nest_monitor.schema import (
     NestState,
     PrefilterResult,
     Severity,
-    ThreatSpecies,
 )
 
 log = logging.getLogger(__name__)
@@ -97,7 +96,7 @@ _AMBIGUOUS_CONFIRM_WINDOW_S = 10 * 60
 # spaces. Use a regex to pull the numeric value out instead of json.loads()
 # on every row — the 24h sitting-ratio scan touches hundreds of rows and
 # we only need one field. Anchored on the quote to avoid matching
-# "chick_count_estimate":0.62 or similar.
+# "young_count_estimate":0.62 or similar.
 _CONF_RE = re.compile(r'"confidence":([0-9]*\.?[0-9]+)')
 
 
@@ -122,7 +121,14 @@ def _row_passes_confidence(observation_json: str | None, floor: float = _MIN_CON
 
 
 def _threat_to_str(x) -> str:
-    if isinstance(x, ThreatSpecies):
+    """Normalize a threat-species entry to its canonical string form.
+
+    Post-Phase-3 threat_species_detected is already list[str] (the
+    ThreatSpecies enum is gone), so this is mostly a belt-and-suspenders
+    cast for any legacy enum-like values stored on a NestObservation
+    before rehydration.
+    """
+    if hasattr(x, "value"):
         return x.value
     return str(x)
 
@@ -204,7 +210,7 @@ class StateStore:
             "ALTER TABLE state ADD COLUMN egg_laying_started_ts REAL",
             "ALTER TABLE state ADD COLUMN incubation_started_ts REAL",
             # Ambiguous-occupied-cup pending candidate (2026-04-17). When
-            # cardinal_on_nest=uncertain + near_nest_activity=true + no named
+            # attending_parent_on_nest=uncertain + near_nest_activity=true + no named
             # threat species, we treat the first frame as a "pending ambiguous"
             # candidate (no alert). A second consecutive matching frame within
             # the pending window = soft presence. See events.py
@@ -334,10 +340,10 @@ class StateStore:
             _ir_now = observation_indicates_ir_mode(observation)
             _conf_ok = (not _quiet_now and not _ir_now) or observation.confidence >= 0.75
 
-            if observation.cardinal_on_nest == "true" and _conf_ok:
+            if observation.attending_parent_on_nest == "true" and _conf_ok:
                 last_mother_seen_ts = ts
                 in_absence = False
-            elif observation.cardinal_on_nest == "false" and _conf_ok:
+            elif observation.attending_parent_on_nest == "false" and _conf_ok:
                 if (
                     last_mother_seen_ts is not None
                     and (ts - last_mother_seen_ts) >= _ABSENCE_ENTER_SECONDS
@@ -366,7 +372,7 @@ class StateStore:
         # ── Ambiguous-occupied-cup pending-candidate path (2026-04-17) ────
         # When the analyzer sees a bird visibly at the nest cup but cannot
         # confirm species (no thrasher field marks, no cardinal crest
-        # visible) it correctly returns cardinal_on_nest="uncertain" and
+        # visible) it correctly returns attending_parent_on_nest="uncertain" and
         # often threat_species_detected=["unknown"]. Before this logic,
         # that single frame would fire BOTH a MEDIUM (not-true) AND a HIGH
         # predator_near_nest (unknown + near_nest_activity). Drove ~20 false
@@ -434,16 +440,16 @@ class StateStore:
             and observation.nest_visible
         ):
             # Update chick count when chicks are confidently visible.
-            if observation.chicks_visible == "true" and observation.chick_count_estimate is not None:
-                last_chick_count = int(observation.chick_count_estimate)
+            if observation.young_visible == "true" and observation.young_count_estimate is not None:
+                last_chick_count = int(observation.young_count_estimate)
 
             # Feeding event — latest timestamp. Used downstream to suppress
             # MEDIUM long-absence alerts for a cooldown window.
-            if observation.mother_feeding_chicks:
+            if observation.attending_parent_feeding_young:
                 last_feeding_event_ts = ts
 
             # Transition: building_nest → egg_laying
-            # Trigger: first confident cardinal_on_nest=true observation.
+            # Trigger: first confident attending_parent_on_nest=true observation.
             # During egg laying, the female sits briefly (1/day for 3-4 days)
             # to lay. The first sustained sitting is our signal that laying
             # has begun. We only ever see this transition for future broods;
@@ -451,7 +457,7 @@ class StateStore:
             # monitoring started (backfill tool sets egg_laying_started_ts).
             if (
                 lifecycle_stage == "building_nest"
-                and observation.cardinal_on_nest == "true"
+                and observation.attending_parent_on_nest == "true"
             ):
                 lifecycle_stage = "egg_laying"
                 if egg_laying_started_ts is None:
@@ -462,7 +468,7 @@ class StateStore:
                 )
 
             # Transition: egg_laying → incubation
-            # Trigger: ≥70% cardinal_on_nest=true ratio over a 24h rolling
+            # Trigger: ≥70% attending_parent_on_nest=true ratio over a 24h rolling
             # window of confident observations. During egg laying, the female
             # visits briefly to lay one egg per day; sustained sitting means
             # the final egg is down and full incubation has begun (~12 days
@@ -491,10 +497,10 @@ class StateStore:
                     # than the real egg_laying → incubation boundary.
                     if not _row_passes_confidence(oj):
                         continue
-                    if '"cardinal_on_nest":"true"' in oj:
+                    if '"attending_parent_on_nest":"true"' in oj:
                         confident_on_nest += 1
                         confident_total += 1
-                    elif '"cardinal_on_nest":"false"' in oj:
+                    elif '"attending_parent_on_nest":"false"' in oj:
                         confident_total += 1
                     # "uncertain" doesn't count — neither in numerator nor
                     # denominator — so partial-view/IR observations neither

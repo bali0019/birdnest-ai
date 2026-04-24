@@ -198,7 +198,7 @@ async def test_mother_returns_low_alert(
     cardinal_jpeg_bytes, empty_nest_jpeg_bytes,
     obs_on_nest, obs_off_nest,
 ):
-    """After an absence, when cardinal_on_nest flips back to "true", a LOW
+    """After an absence, when attending_parent_on_nest flips back to "true", a LOW
     ``mother_returned`` alert must fire exactly once.
     """
     captured: list = []

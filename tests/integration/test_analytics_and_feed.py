@@ -58,8 +58,8 @@ async def test_analytics_report_posts_to_discord(
 
     # Synthetic observations: a couple of "on nest" then a "thrasher" event.
     obs_on = {
-        "mother_cardinal_present": "true",
-        "cardinal_on_nest": "true",
+        "attending_parent_present": "true",
+        "attending_parent_on_nest": "true",
         "eggs_visible": "true",
         "egg_count_estimate": 3,
         "nest_visible": True,
@@ -73,8 +73,8 @@ async def test_analytics_report_posts_to_discord(
     }
     obs_off = dict(obs_on)
     obs_off.update(
-        mother_cardinal_present="false",
-        cardinal_on_nest="false",
+        attending_parent_present="false",
+        attending_parent_on_nest="false",
         species_detected=[],
         summary="Nest empty — foraging trip.",
     )
@@ -130,7 +130,7 @@ async def test_feed_channel_single_tier_embed(
     and post it to the REAL feed webhook. Single-tier mode (no prefilter
     fields) so the embed should render as a plain "📷 Snap" message.
 
-    Uses the cardinal_on_nest reference image so the attached photo matches
+    Uses the attending_parent_on_nest reference image so the attached photo matches
     the "cardinal on nest" observation summary — avoids the confusing
     UX the user flagged on 2026-04-15 where tests posted a thrasher photo
     captioned "cardinal on nest".

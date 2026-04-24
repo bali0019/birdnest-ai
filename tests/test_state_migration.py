@@ -381,8 +381,8 @@ def test_record_wraps_writes_in_transaction(tmp_path):
     store._conn = _SqlRecordingProxy(store._conn, statements)
     try:
         obs = NestObservation(
-            mother_cardinal_present="true",
-            cardinal_on_nest="true",
+            attending_parent_present="true",
+            attending_parent_on_nest="true",
             eggs_visible="false",
             egg_count_estimate=None,
             nest_visible=True,
@@ -472,7 +472,7 @@ def test_concurrent_reader_never_sees_post_insert_pre_update_middle(tmp_path):
     This is the Codex P2 scenario. We run the writer in a background
     thread alternating mom on/off the nest, while the main thread polls
     the RO connection. For each snapshot we assert: if the newest
-    observation says cardinal_on_nest=true at high confidence, then
+    observation says attending_parent_on_nest=true at high confidence, then
     state.in_absence must be False. If the writer wasn't atomic, this
     assertion would fail on some snapshots (observation committed,
     state still in_absence=True from the prior absence).
@@ -486,8 +486,8 @@ def test_concurrent_reader_never_sees_post_insert_pre_update_middle(tmp_path):
 
     def _obs(on_nest: bool):
         return NestObservation(
-            mother_cardinal_present="true" if on_nest else "false",
-            cardinal_on_nest="true" if on_nest else "false",
+            attending_parent_present="true" if on_nest else "false",
+            attending_parent_on_nest="true" if on_nest else "false",
             eggs_visible="false",
             egg_count_estimate=None,
             nest_visible=True,
@@ -547,11 +547,11 @@ def test_concurrent_reader_never_sees_post_insert_pre_update_middle(tmp_path):
             # yet in_absence=True (from the prior absence — the state
             # UPDATE hadn't committed when we peeked).
             if (
-                '"cardinal_on_nest":"true"' in latest_json
+                '"attending_parent_on_nest":"true"' in latest_json
                 and in_absence_flag
             ):
                 inconsistencies.append(
-                    f"latest_obs cardinal_on_nest=true but state.in_absence=True"
+                    f"latest_obs attending_parent_on_nest=true but state.in_absence=True"
                 )
     finally:
         stop_writer.set()

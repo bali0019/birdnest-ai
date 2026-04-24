@@ -53,9 +53,9 @@ def _evaluate_expected(
     """Compare an observation against an expected.json dict.
 
     The expected dict may contain any of:
-      cardinal_on_nest, mother_cardinal_present, chicks_visible,
-      mother_feeding_chicks, eggs_visible, threat_species_detected_empty (bool),
-      chick_count_estimate_min (int), chick_count_estimate_max (int),
+      attending_parent_on_nest, attending_parent_present, young_visible,
+      attending_parent_feeding_young, eggs_visible, threat_species_detected_empty (bool),
+      young_count_estimate_min (int), young_count_estimate_max (int),
       confidence_min (float), confidence_max (float)
 
     Fields absent from expected are not checked — this lets each image
@@ -63,7 +63,7 @@ def _evaluate_expected(
     """
     checks: list[CheckResult] = []
 
-    for field in ("cardinal_on_nest", "mother_cardinal_present", "chicks_visible", "eggs_visible"):
+    for field in ("attending_parent_on_nest", "attending_parent_present", "young_visible", "eggs_visible"):
         if field in expected:
             actual = getattr(obs, field)
             passed = actual == expected[field]
@@ -72,11 +72,11 @@ def _evaluate_expected(
                 f"expected={expected[field]!r} got={actual!r}",
             ))
 
-    if "mother_feeding_chicks" in expected:
-        passed = obs.mother_feeding_chicks == expected["mother_feeding_chicks"]
+    if "attending_parent_feeding_young" in expected:
+        passed = obs.attending_parent_feeding_young == expected["attending_parent_feeding_young"]
         checks.append(CheckResult(
-            "mother_feeding_chicks", passed,
-            f"expected={expected['mother_feeding_chicks']} got={obs.mother_feeding_chicks}",
+            "attending_parent_feeding_young", passed,
+            f"expected={expected['attending_parent_feeding_young']} got={obs.attending_parent_feeding_young}",
         ))
 
     if "threat_species_detected_empty" in expected:
@@ -88,17 +88,17 @@ def _evaluate_expected(
             f"expected_empty={want_empty} got={obs.threat_species_detected}",
         ))
 
-    if "chick_count_estimate_min" in expected or "chick_count_estimate_max" in expected:
-        count = obs.chick_count_estimate
-        lo = expected.get("chick_count_estimate_min")
-        hi = expected.get("chick_count_estimate_max")
+    if "young_count_estimate_min" in expected or "young_count_estimate_max" in expected:
+        count = obs.young_count_estimate
+        lo = expected.get("young_count_estimate_min")
+        hi = expected.get("young_count_estimate_max")
         if count is None:
             passed = False
             detail = f"expected in [{lo}, {hi}] got=None"
         else:
             passed = (lo is None or count >= lo) and (hi is None or count <= hi)
             detail = f"expected in [{lo}, {hi}] got={count}"
-        checks.append(CheckResult("chick_count_estimate", passed, detail))
+        checks.append(CheckResult("young_count_estimate", passed, detail))
 
     if "confidence_min" in expected:
         want = float(expected["confidence_min"])
@@ -127,10 +127,10 @@ async def _run_one(
     checks = _evaluate_expected(obs, expected)
     passed = all(c.passed for c in checks)
     if verbose:
-        print(f"\n  Observation: cardinal_on_nest={obs.cardinal_on_nest} "
-              f"chicks_visible={obs.chicks_visible} "
-              f"chick_count={obs.chick_count_estimate} "
-              f"feeding={obs.mother_feeding_chicks} "
+        print(f"\n  Observation: attending_parent_on_nest={obs.attending_parent_on_nest} "
+              f"young_visible={obs.young_visible} "
+              f"chick_count={obs.young_count_estimate} "
+              f"feeding={obs.attending_parent_feeding_young} "
               f"conf={obs.confidence:.2f}")
         print(f"  Summary: {obs.summary}")
     return passed, obs, checks

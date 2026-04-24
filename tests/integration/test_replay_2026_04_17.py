@@ -37,6 +37,27 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 EVIDENCE_DIR = REPO_ROOT / "evidence" / "2026-04-17"
 
 
+# Evidence JSONs on disk were captured on the cardinal branch with the
+# old schema keys. The generic branch's NestObservation uses generic
+# names. Runtime doesn't need backward compat (fresh DB per Codex's
+# plan), but this test-local remapper keeps the replay regression
+# working on the dev machine that has the historical evidence.
+# Production never hits this code path.
+_LEGACY_KEY_REMAP = {
+    "mother_cardinal_present": "attending_parent_present",
+    "cardinal_on_nest": "attending_parent_on_nest",
+    "chicks_visible": "young_visible",
+    "chick_count_estimate": "young_count_estimate",
+    "mother_feeding_chicks": "attending_parent_feeding_young",
+}
+
+
+def _remap_legacy_keys(obs_data: dict) -> dict:
+    """Rename cardinal-branch observation JSON keys to the generic
+    equivalents expected by NestObservation on this branch."""
+    return {_LEGACY_KEY_REMAP.get(k, k): v for k, v in obs_data.items()}
+
+
 def _load_entries() -> list[tuple[float, str, NestObservation, NestObservation | None, dict]]:
     """Load all 2026-04-17 evidence dirs with observation.json + meta.json,
     sorted chronologically by ts. Also loads verification.json when
@@ -51,12 +72,14 @@ def _load_entries() -> list[tuple[float, str, NestObservation, NestObservation |
             continue
         try:
             meta = json.loads(meta_path.read_text())
-            obs_data = json.loads(obs_path.read_text())
+            obs_data = _remap_legacy_keys(json.loads(obs_path.read_text()))
             obs = NestObservation(**obs_data)
             opus_obs: NestObservation | None = None
             ver_path = d / "verification.json"
             if ver_path.exists():
-                opus_obs = NestObservation(**json.loads(ver_path.read_text()))
+                opus_obs = NestObservation(
+                    **_remap_legacy_keys(json.loads(ver_path.read_text()))
+                )
         except Exception as exc:
             pytest.fail(f"failed to load {d.name}: {exc}")
         entries.append((float(meta["ts"]), d.name, obs, opus_obs, meta))
@@ -234,10 +257,10 @@ def test_post_fix_dramatic_alert_reduction(fired):
     # The HIGH — crest-hidden cardinal classified as unknown bird at cup.
     # Matches ambig-cup predicate → suppressed before rule 3 fires.
     ("14-56-28_HIGH_unknown",
-     "ambig-cup: uncertain cardinal_on_nest + near_nest + no named threat"),
+     "ambig-cup: uncertain attending_parent_on_nest + near_nest + no named threat"),
 
     # The unknown-bird MEDIUMs where the analyzer returned
-    # near_nest_activity=true AND cardinal_on_nest="uncertain". These
+    # near_nest_activity=true AND attending_parent_on_nest="uncertain". These
     # match the ambig-cup predicate exactly and must be suppressed.
     # NOTE: 13-15-14 and 13-20-20 are NOT in this list because their
     # analyzer output had near_nest_activity=false despite the summary
@@ -337,7 +360,7 @@ def test_ambig_frames_leave_pending_or_soft_presence_trace(replay_result):
     updates last_mother_seen_ts). Verify that at least one ambig frame
     appeared in the day and that last_mother_seen_ts did not regress
     across it (either from ambig-pair promotions or from real
-    cardinal_on_nest=true observations downstream).
+    attending_parent_on_nest=true observations downstream).
 
     Consumes the shared module-scoped replay — no second full-day walk.
     """
