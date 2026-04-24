@@ -1,0 +1,174 @@
+# Northern Cardinal (Cardinalis cardinalis) — reference species profile
+#
+# This profile captures what the cardinal-branch runtime had hardcoded:
+# prompt context, threat species, field marks, lifecycle timing, and
+# alert copy. Strings here that look cardinal-specific (e.g. "Female
+# cardinal first observed sitting on the nest") are intentionally
+# verbatim copies of the pre-refactor cardinal alert copy — so this
+# branch, running under this profile, produces byte-identical Discord
+# output for the cardinal use case.
+#
+# New species profiles author their own strings; this one is both the
+# reference implementation AND the tuning target for the regression
+# gate in Phase 9.
+
+[species]
+slug = "northern_cardinal"
+common_name = "Northern Cardinal"
+scientific_name = "Cardinalis cardinalis"
+display_name = "cardinal"
+
+[target]
+# Substrings the verifier matches (lowercased) against
+# observation.species_detected to decide 'target, not threat'. Multiple
+# entries allowed to match free-text model outputs.
+match_terms = ["cardinal", "northern cardinal"]
+attending_parent_label = "female cardinal"
+young_label = "chicks"
+
+[prompt_context]
+habitat = "backyard rose bush in Marietta, Georgia"
+camera = "low to the ground in dense foliage near a back door"
+nest_type = "open cup woven into a rose bush"
+threat_history = "A Brown Thrasher has previously attacked this nest and stolen at least one egg — threat detection is life-or-death for the chicks."
+
+[field_marks.target]
+summary = "The female Northern Cardinal is a small (~21 cm) compact songbird with a distinctive red/pinkish crest, tan/buff body with reddish-orange tinge on wings and tail, and a short thick orange beak. She is the nesting mother and is NEVER a threat."
+cues = [
+    "DISTINCTIVE RED/PINKISH CREST on the head — the key identifying feature. May be laid flat when she's sitting but usually at least partially visible.",
+    "Tan/buff body with reddish-orange tinge on wings and tail.",
+    "Short, THICK, ORANGE or red-orange beak.",
+    "Dark gray/black face mask around the base of the beak.",
+    "Small, compact body (~21 cm total length).",
+    "Short tail.",
+    "Dark eye.",
+]
+
+# ── Threat species ─────────────────────────────────────────────────────
+# Canonical names must match the keys in [field_marks.threats.*] below.
+# Do NOT include "unknown" — it is reserved and added automatically by
+# the runtime threat-list validator.
+[threats]
+names = ["brown_thrasher", "blue_jay", "squirrel", "chipmunk"]
+
+[field_marks.threats.brown_thrasher]
+cues = [
+    "NO CREST — flat, smooth head silhouette.",
+    "LONG thin tail, often as long as the body itself.",
+    "Heavily STREAKED breast (bold dark streaks on white or pale buff).",
+    "BRIGHT YELLOW eye (distinctive when visible).",
+    "Long, slightly DOWN-CURVED beak.",
+    "Larger body (~28 cm) — noticeably bigger than a cardinal.",
+    "Rich rusty-brown plumage on back and wings.",
+]
+note = "HAS ALREADY ATTACKED THIS NEST. Female cardinal and Brown Thrasher are BOTH brownish birds and are easily confused on this camera. Use the cues above to distinguish."
+
+[field_marks.threats.blue_jay]
+cues = [
+    "Bright blue plumage on back, wings, and tail.",
+    "White belly and underparts.",
+    "Black necklace/collar across the throat.",
+    "Distinct crest (unlike thrasher) but NOT red — blue.",
+]
+note = "THREAT — blue jays are known nest raiders."
+
+[field_marks.threats.squirrel]
+cues = [
+    "Mammal — brown/gray fur, bushy tail.",
+    "Four legs, no wings.",
+    "THREAT if physically AT or ON the rose bush.",
+]
+note = "Tree squirrels raid nests opportunistically. Threat severity scales with how close they are to the cup."
+
+[field_marks.threats.chipmunk]
+cues = [
+    "Small ground squirrel, striped back (dark and light stripes).",
+    "Smaller than a tree squirrel.",
+    "THREAT if physically AT or ON the rose bush.",
+]
+note = "Chipmunks climb and will raid nests for eggs."
+
+# ── Ambient species (visible but NOT threats) ──────────────────────────
+[[field_marks.ambient]]
+name = "Northern Mockingbird"
+cues = [
+    "Grey upperparts with white wing patches visible in flight.",
+    "Long tail, no crest.",
+    "Often mimics other bird songs.",
+]
+note = "NEUTRAL. May visit or sing nearby but does not raid cardinal nests. Do NOT list in threat_species_detected."
+
+[[field_marks.ambient]]
+name = "House Finch"
+cues = [
+    "Small, streaky brown bird.",
+    "Male has red wash on head/breast; female is plain streaky brown.",
+    "Smaller than a cardinal.",
+]
+note = "NEUTRAL. Similar size and color to female cardinal but with streaked breast and no crest. Not a threat."
+
+# ── Lifecycle timing + detection thresholds ────────────────────────────
+[lifecycle]
+# Biological durations specific to Northern Cardinals.
+egg_laying_days_min = 3
+egg_laying_days_max = 4
+incubation_days_min = 11
+incubation_days_max = 13
+fledge_days_min = 9
+fledge_days_max = 11
+
+# Analyzer tuning thresholds — profile-tunable but defaults work for
+# most open-cup passerines.
+sitting_ratio_threshold = 0.70
+sitting_ratio_window_hours = 24
+young_confirmation_window_hours = 4
+fledge_absence_hours = 12
+fledge_threat_free_hours = 48
+
+# ── User-facing alert copy ─────────────────────────────────────────────
+# These strings appear in Discord. Capture the EXACT current cardinal
+# alert phrasing so this branch running under the cardinal profile
+# produces identical output to the pre-refactor main branch for the
+# cardinal use case.
+#
+# TOML section is [alert_copy] (not [copy]) to avoid shadowing
+# pydantic BaseModel.copy() — see species/_schema.py.
+[alert_copy]
+egg_laying_begin_title = "🥚 Egg laying has begun"
+egg_laying_begin_summary = "Female cardinal first observed sitting on the nest. Laying typically takes 3-4 days (one egg/day) before full incubation starts."
+
+incubation_begin_title = "🪺 Incubation has begun"
+# {ratio_pct} is the on-nest ratio as a pre-formatted percent string
+# (e.g. "73%"). Supplied by events.py at emit time.
+incubation_begin_summary = "Sustained sitting confirmed ({ratio_pct} on-nest over 24h). Full incubation is underway — ~12 day countdown to hatch begins now."
+
+hatch_title = "🐣 Chicks hatched!"
+hatch_summary = "Chick presence confirmed by two independent observations. Feeding stage begins."
+
+fledge_title = "🦅 Chicks fledged!"
+fledge_summary = "No cardinal visits for 12+ hours after chick presence confirmed. Chicks have left the nest."
+
+attending_parent_returned_title = "Mother returned to nest"
+attending_parent_returned_summary = "Female cardinal visible on or near the nest after an extended absence."
+
+# ── Reference assets (regression suite + dryrun image paths) ───────────
+[reference_assets]
+directory = "evidence/reference/northern_cardinal"
+# Phase 7 will move the existing reference images under this directory.
+# For Phase 2 these paths are recorded but not yet physically populated.
+target_on_nest = [
+    "cardinal_on_nest.jpg",
+]
+threat_examples = [
+    "historical_thrasher_1.jpg",
+    "historical_thrasher_2.jpg",
+    "historical_thrasher_3.jpg",
+    "thrasher_stealing_egg_highlighted.gif",
+]
+empty_nest = [
+    "empty_nest.jpg",
+]
+lifecycle_regression = [
+    # Cardinal lifecycle regression images live under lifecycle/ per §23
+    # — populated by Phase 7. Paths are relative to `directory` above.
+]

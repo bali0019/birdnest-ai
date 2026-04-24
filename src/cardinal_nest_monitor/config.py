@@ -147,6 +147,21 @@ class Settings(BaseSettings):
     # Set to 0 to disable forced periodic escalation.
     forced_opus_interval_seconds: int = Field(300, ge=0, le=3600)
 
+    # ── Species profile (generic-nest-monitor branch) ───────────────────
+    # Path to the TOML profile that drives target/threat identity, prompt
+    # rendering, lifecycle timing, and user-facing copy. Loaded once at
+    # startup via species.loader.get_species_profile() and cached for the
+    # process lifetime. Ships with `species/northern_cardinal.toml` (the
+    # current cardinal behavior) and `species/american_robin.toml`
+    # (validation target for the refactor).
+    species_profile_path: Path = Field(
+        Path("./species/northern_cardinal.toml"),
+        description=(
+            "Path to the active species profile TOML. Override via "
+            ".env (SPECIES_PROFILE_PATH) to monitor a different bird."
+        ),
+    )
+
     # ── Paths ───────────────────────────────────────────────────────────
     # ISOLATION NOTE (generic-nest-monitor branch, 2026-04-23):
     # Defaults point at `*_generic` paths so a generic-branch deployment

@@ -1,0 +1,200 @@
+# American Robin (Turdus migratorius) — reference profile for the generic
+# refactor.
+#
+# Use this profile to validate that the profile-driven runtime
+# actually works for a DIFFERENT open-cup nesting passerine. Key
+# differences from the cardinal profile:
+#   - sex-colored plumage is much less dimorphic; both parents incubate
+#     (female does most) and both feed chicks.
+#   - principal predators differ — add American Crow, accipiter hawks.
+#   - camera/habitat strings are placeholders; a real robin deployment
+#     would customize these.
+#   - lifecycle timing: ~12-14 day incubation, ~13-16 day fledge.
+#
+# This profile is a STRUCTURAL validation target for Phases 3-9. It is
+# intentionally NOT tuned for a specific backyard deployment. If you
+# want to use it in production, customize `prompt_context.habitat`,
+# `camera`, `threat_history`, and `reference_assets` for your scene.
+
+[species]
+slug = "american_robin"
+common_name = "American Robin"
+scientific_name = "Turdus migratorius"
+display_name = "robin"
+
+[target]
+match_terms = ["robin", "american robin"]
+# Both parents attend the nest, but the female does most of the
+# incubating and is what the camera most often sees on the cup.
+attending_parent_label = "robin parent"
+young_label = "chicks"
+
+[prompt_context]
+habitat = "backyard nest site in a typical North American yard"
+camera = "placed to view the open-cup nest with minimal obstruction"
+nest_type = "open cup of grasses and mud, typically on a tree branch or ledge"
+threat_history = ""
+
+[field_marks.target]
+summary = "The American Robin is a medium-sized (~23–28 cm) thrush with a gray-brown back, bright RUSTY-ORANGE breast, dark head, long straight yellow bill, and white patches under the tail. Both sexes look similar though the female is slightly duller; the attending parent at the nest is usually the female."
+cues = [
+    "RUSTY-ORANGE BREAST — the single most identifying feature. Bright and unambiguous in color images.",
+    "Gray-brown back and wings.",
+    "Dark (often near-black) head in the male; the female's head is slightly grayer.",
+    "Long straight YELLOW bill with a slight dark tip.",
+    "White throat with dark streaks.",
+    "White patches under the tail (often visible when the bird is perched facing away).",
+    "Medium size (~23–28 cm) — noticeably larger than a cardinal or sparrow.",
+    "Upright posture when standing; long legs.",
+]
+
+# ── Threats ────────────────────────────────────────────────────────────
+# Canonical threat names. Robins face a different predator set than
+# cardinals — jays and crows are the big aerial threats plus accipiters.
+[threats]
+names = [
+    "blue_jay",
+    "american_crow",
+    "coopers_hawk",
+    "sharp_shinned_hawk",
+    "squirrel",
+    "chipmunk",
+    "raccoon",
+    "domestic_cat",
+]
+
+[field_marks.threats.blue_jay]
+cues = [
+    "Bright blue plumage on back, wings, tail.",
+    "White belly.",
+    "Black necklace.",
+    "Distinctive blue crest.",
+]
+note = "Jays routinely raid robin nests for eggs and nestlings."
+
+[field_marks.threats.american_crow]
+cues = [
+    "Large (~43 cm) entirely black bird.",
+    "Heavy black bill.",
+    "Fan-shaped tail.",
+    "Very noisy — loud 'caw' calls.",
+]
+note = "Crows are opportunistic nest raiders; will take both eggs and nestlings."
+
+[field_marks.threats.coopers_hawk]
+cues = [
+    "Medium-sized accipiter (~37–50 cm).",
+    "Blue-gray back, barred rusty underparts.",
+    "Long banded tail.",
+    "Red eyes.",
+    "Compact, muscular build.",
+]
+note = "Primary adult-bird predator; will take a robin off the nest."
+
+[field_marks.threats.sharp_shinned_hawk]
+cues = [
+    "Smaller accipiter (~24–34 cm).",
+    "Similar coloring to Cooper's but smaller with squared tail.",
+    "Red eyes.",
+]
+note = "Smaller but more common; will take fledglings and nestlings."
+
+[field_marks.threats.squirrel]
+cues = [
+    "Mammal with bushy tail, gray or brown fur.",
+    "Climbing and running in the nest tree is a direct threat.",
+]
+note = "Tree squirrels raid nests for eggs and young."
+
+[field_marks.threats.chipmunk]
+cues = [
+    "Small striped ground squirrel.",
+    "Rare at elevated nest sites but possible.",
+]
+note = "Low-probability threat for tree nests; realistic for low ledge nests."
+
+[field_marks.threats.raccoon]
+cues = [
+    "Large mammal (~60 cm body) with black face mask and ringed tail.",
+    "Nocturnal — most likely visible on IR frames.",
+    "Excellent climber.",
+]
+note = "Overnight nest raider. Takes eggs, nestlings, even adult birds."
+
+[field_marks.threats.domestic_cat]
+cues = [
+    "Four-legged mammal, various colors.",
+    "Tail, whiskers, ears pointed.",
+]
+note = "Outdoor cats are a major cause of adult and fledgling mortality. Treat as a threat whenever visible near the nest."
+
+# ── Ambient species ────────────────────────────────────────────────────
+[[field_marks.ambient]]
+name = "Northern Mockingbird"
+cues = [
+    "Grey upperparts with white wing patches visible in flight.",
+    "Long tail, no rusty breast.",
+]
+note = "NEUTRAL. Not a robin threat, may visit nearby."
+
+[[field_marks.ambient]]
+name = "European Starling"
+cues = [
+    "Black body with iridescent purple-green sheen.",
+    "Yellow bill (breeding season).",
+    "Compact shape.",
+]
+note = "NEUTRAL for robins at an established nest; starlings compete for cavity nests but do not typically raid open-cup robin nests."
+
+# ── Lifecycle timing + detection thresholds ────────────────────────────
+[lifecycle]
+# American Robin biology:
+#   - Clutch size typically 3-5 eggs, one laid per day.
+#   - Incubation 12-14 days.
+#   - Chicks fledge at 13-16 days post-hatch.
+egg_laying_days_min = 3
+egg_laying_days_max = 5
+incubation_days_min = 12
+incubation_days_max = 14
+fledge_days_min = 13
+fledge_days_max = 16
+
+# Use the default detection thresholds — these are analyzer-tuning
+# parameters, not species biology. Validate in Phase 9 whether robin
+# behavior actually matches the 70% sitting-ratio heuristic.
+sitting_ratio_threshold = 0.70
+sitting_ratio_window_hours = 24
+young_confirmation_window_hours = 4
+fledge_absence_hours = 12
+fledge_threat_free_hours = 48
+
+# ── User-facing alert copy ─────────────────────────────────────────────
+# Robin-specific phrasing. Phase 9 validates these read naturally on
+# live-service Discord embeds.
+[alert_copy]
+egg_laying_begin_title = "🥚 Egg laying has begun"
+egg_laying_begin_summary = "A robin parent was first observed at the nest. Laying typically takes 3-5 days (one egg/day) before full incubation starts."
+
+incubation_begin_title = "🪺 Incubation has begun"
+incubation_begin_summary = "Sustained sitting confirmed ({ratio_pct} on-nest over 24h). Full incubation is underway — ~12-14 day countdown to hatch begins now."
+
+hatch_title = "🐣 Chicks hatched!"
+hatch_summary = "Chick presence confirmed by two independent observations. Feeding stage begins."
+
+fledge_title = "🦅 Chicks fledged!"
+fledge_summary = "No robin visits for 12+ hours after chick presence confirmed. Chicks have left the nest."
+
+attending_parent_returned_title = "Parent returned to nest"
+attending_parent_returned_summary = "A robin parent visible on or near the nest after an extended absence."
+
+# ── Reference assets ───────────────────────────────────────────────────
+# Populated in Phase 7 once real robin images are collected.
+# For Phase 2 the structure exists but the image files do not yet;
+# profile validation passes because the fields are strings, not
+# "must-exist" file paths.
+[reference_assets]
+directory = "evidence/reference/american_robin"
+target_on_nest = []
+threat_examples = []
+empty_nest = []
+lifecycle_regression = []
