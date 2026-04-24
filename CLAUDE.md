@@ -548,6 +548,21 @@ First three minutes: 6 snaps instead of 3. After that, relaxes to the normal abs
 
 **Don't regress.** If you see `burst_snap_interval_seconds` removed or clamped higher than 60s, reconsider — the whole point is catching the 4-second raid window.
 
+**Mid-wait re-evaluation + parity fix (2026-04-23).** Burst cadence was silently dead in production between 2026-04-16 and 2026-04-23 for two independent reasons Codex flagged together:
+
+- **Bug A (split mode):** `blink_client.py::snap_loop` computed `get_interval()` ONCE per cycle and committed to a single long wait of `interval - 6` seconds. When the analyzer flipped `in_absence=True` mid-wait, the downloader was already asleep for 294 s (at 300 s default) and wouldn't re-check state until the 180 s burst window had elapsed. Every absence event in the 2026-04-18 logs went `300s default → 60s absence`, never through `30s burst`.
+- **Bug B (combined mode):** `main.py`'s `get_interval` branched only on `quiet > absence > default`. It never even checked `absence_started_ts` or `burst_duration_seconds`. Burst was aspirational config in combined mode — a latent parity gap that would bite anyone rolling back to single-process for debugging.
+
+Fix shape: shared `src/cardinal_nest_monitor/cadence.py::compute_snap_interval(settings, state, now_ts)` pure helper enforces the full precedence (quiet > burst > absence > default). Both `downloader_loop.py::get_interval` and `main.py::get_interval` delegate to it. `snap_loop` got a new `_wait_for_next_snap_deadline(snap_now, last_snap_monotonic, get_interval_fn, settings, poll_interval=15.0)` helper that re-evaluates `get_interval()` every 15 s so a mid-wait shrink takes effect on THIS wait, not the next cycle. Three load-bearing properties of the helper:
+
+1. **Monotonic anchor** (`time.monotonic()` for deadline math; `time.time()` only inside `compute_snap_interval` for quiet-hours and absence-started arithmetic). NTP adjustments must not skew inter-snap spacing.
+2. **No snap-immediately on re-eval** — when a shrink is observed, the return happens when `last_snap_monotonic + (new_interval - 6) <= monotonic_now`, NOT at the poll-tick boundary. Preserves the intended 30 s burst semantics (would otherwise produce snaps at 20 s or whatever the current poll tick happens to be).
+3. **Exception fallback preserved** — if `get_interval_fn` raises on any tick, log and fall back to `settings.current_snap_interval(datetime.now().time())`. Matches the pre-helper single-shot contract; one transient callback error must NOT crash the loop.
+
+Parity guard: `tests/test_cadence.py::test_main_combined_mode_get_interval_delegates_to_compute_snap_interval` source-inspects main.py for the helper call. If a future Claude edits combined-mode cadence back to local branching, this test fires.
+
+**Don't regress the mid-wait re-eval.** A future Claude might look at the 15 s poll loop and think "this is overhead — just compute the interval once per cycle." That's Bug A. The polling is the whole point.
+
 ### 22. Multi-image analysis (2026-04-16)
 
 Previously the analyzer received one downscaled JPEG per snap. Now it receives THREE crops per request:

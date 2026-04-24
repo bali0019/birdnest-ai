@@ -230,3 +230,141 @@ def test_sanitize_clip_timestamp_traversal_payload():
     assert "." not in result
     # And no ".." sequence.
     assert ".." not in result
+
+
+# ─── _wait_for_next_snap_deadline (burst-cadence fix, 2026-04-23) ───────
+#
+# The helper is load-bearing for the §21 burst cadence: without mid-wait
+# re-evaluation the downloader commits to a 300 s wait right before
+# absence is detected, and the 180 s burst window elapses before it ever
+# looks at state again. These tests exercise the three invariants that
+# the fix has to hold (Codex-vetted):
+#   1. shrink observed mid-wait → return early (burst actually engages)
+#   2. motion nudge during the wait → return immediately (no cadence floor
+#      penalty for real-time events)
+#   3. get_interval raising → fall back, don't crash (preserves the
+#      pre-existing snap_loop error contract)
+
+
+import asyncio
+import time
+from unittest.mock import MagicMock
+
+from cardinal_nest_monitor.blink_client import _wait_for_next_snap_deadline
+
+
+def _fake_settings(default_interval: int = 300):
+    """Minimal settings stub for the wait helper. Only current_snap_interval
+    is consulted, and only on the exception path."""
+    s = MagicMock()
+    s.current_snap_interval = MagicMock(return_value=default_interval)
+    return s
+
+
+async def test_wait_for_next_snap_deadline_advances_when_interval_shrinks_mid_wait():
+    """The whole point of the fix: a mid-wait interval shrink must take
+    effect on THIS wait, not the NEXT one.
+
+    We simulate the scenario where the downloader had committed to a long
+    wait, but in the meantime the analyzer flipped ``in_absence`` True so
+    burst cadence engages. Anchor ``last_snap_monotonic`` 25 s in the
+    past; first ``get_interval_fn()`` call returns 300 (long wait, would
+    have us sleeping at 294 s deadline → remaining 269 s). Second call
+    returns 30 (burst engaged → 24 s deadline, already passed because we
+    anchored 25 s ago). Helper must return on the second poll tick — not
+    wait out the original 300 s.
+
+    Pre-fix single-shot code would have computed the 300 s deadline ONCE
+    and slept through the shrink.
+    """
+    snap_now = asyncio.Event()
+    last_snap_monotonic = time.monotonic() - 25.0  # anchor in the past
+    settings = _fake_settings()
+
+    calls = {"n": 0}
+
+    def get_interval_fn() -> int:
+        calls["n"] += 1
+        # First call: pre-absence. Second call: burst engaged.
+        return 300 if calls["n"] == 1 else 30
+
+    # Walk-through:
+    #   Poll 1: interval=300 → deadline_offset=294; remaining=294-25=269>0
+    #           → sleep min(269, 0.05)=0.05 → TimeoutError → continue.
+    #   Poll 2: interval=30  → deadline_offset=24;  remaining=24-25=-1<=0
+    #           → return. Total elapsed ≈ 0.05 s.
+    start = time.monotonic()
+    await asyncio.wait_for(
+        _wait_for_next_snap_deadline(
+            snap_now, last_snap_monotonic, get_interval_fn, settings,
+            poll_interval=0.05,
+        ),
+        timeout=5.0,
+    )
+    elapsed = time.monotonic() - start
+
+    assert calls["n"] >= 2, "helper did not re-evaluate mid-wait"
+    assert elapsed < 1.0, (
+        f"helper did not return promptly after shrink; took {elapsed:.2f}s"
+    )
+
+
+async def test_wait_for_next_snap_deadline_motion_nudge_returns_immediately():
+    """snap_now.set() during the wait must preempt — motion events are
+    peak-priority and must NOT wait for the next 15 s poll boundary."""
+    snap_now = asyncio.Event()
+    last_snap_monotonic = time.monotonic()
+    settings = _fake_settings()
+
+    def get_interval_fn() -> int:
+        return 300  # would otherwise wait 294 s
+
+    async def nudge_soon():
+        await asyncio.sleep(0.05)
+        snap_now.set()
+
+    start = time.monotonic()
+    await asyncio.gather(
+        _wait_for_next_snap_deadline(
+            snap_now, last_snap_monotonic, get_interval_fn, settings,
+            poll_interval=15.0,  # real production value; nudge still wins
+        ),
+        nudge_soon(),
+    )
+    elapsed = time.monotonic() - start
+    # Must return within roughly the nudge delay + a small scheduler
+    # slop, NOT at the 15 s poll boundary.
+    assert elapsed < 1.0, (
+        f"motion nudge should preempt the poll wait; took {elapsed:.2f}s"
+    )
+
+
+async def test_wait_for_next_snap_deadline_falls_back_on_get_interval_exception():
+    """get_interval raising must degrade to settings.current_snap_interval,
+    not crash the loop. Preserves the pre-helper snap_loop error contract
+    (Codex's point #1).
+    """
+    snap_now = asyncio.Event()
+    # Anchor far enough in the past that the fallback-derived deadline is
+    # already behind us on the first poll, so the helper returns quickly.
+    last_snap_monotonic = time.monotonic() - 100.0
+    # Fallback returns 10s (so deadline offset = max(1, 10 - 6) = 4s;
+    # elapsed 100 s ≫ 4 s → return on first poll).
+    settings = _fake_settings(default_interval=10)
+
+    def get_interval_fn() -> int:
+        raise RuntimeError("boom — transient state DB hiccup")
+
+    start = time.monotonic()
+    await asyncio.wait_for(
+        _wait_for_next_snap_deadline(
+            snap_now, last_snap_monotonic, get_interval_fn, settings,
+            poll_interval=0.05,
+        ),
+        timeout=5.0,
+    )
+    elapsed = time.monotonic() - start
+    # Fallback was consulted (MagicMock records the call).
+    settings.current_snap_interval.assert_called()
+    # And the loop returned cleanly instead of re-raising.
+    assert elapsed < 1.0
