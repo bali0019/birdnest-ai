@@ -4,6 +4,20 @@
 > ### 🥚 Nest Status: **Eggs incubating**
 > Mom is on the nest. System is watching 24/7. *I'll update this page as they hatch and fledge.*
 
+## Crazy-but-true things about this bird
+
+Things that came up while I was researching this project and refused to stop surprising me. All grounded in actual ornithology — no tall tales.
+
+- **Female cardinals sing.** In almost every other songbird species in North America, only males sing — the male-sings-to-attract-a-mate pattern is so universal it was assumed to be a rule. Northern Cardinals break it. The female sings from the nest while incubating, and ornithologists think she's telling the male what food to bring her.
+- **His red color comes from what he eats, not his genes.** Cardinal red is carotenoids, absorbed from berries and fruits. A poorly-fed male turns orange, or even yellow. The intensity of his plumage is, functionally, a public nutrition report that the female reads before deciding whether to mate with him.
+- **Young males are brown.** For most of his first year, a male cardinal looks essentially like a female — same dusky-tan body, same orange beak, no red. He molts into his adult plumage gradually, in patches, over his first summer. If you see a mostly-female-looking cardinal with a few awkward red feathers in spring, you're watching a teenager mid-costume change.
+- **They mate for life.** Socially monogamous — stay paired year-round, defend territory together, reuse it across seasons. During courtship the male brings the female seeds and places them directly in her beak. It looks uncannily like kissing, and it has a name: "mate-feeding." He keeps doing it through incubation, so she doesn't have to leave the eggs to eat.
+- **Males attack their own reflections.** Car side mirrors, windows, shiny bumpers — a territorial male sees a rival that refuses to leave and hurls himself at it for weeks on end. If you have cardinals in your yard long enough you will eventually witness a very small, very angry bird losing a grudge match with a Toyota.
+- **The crest is a mood ring.** It's mobile — flattened when she's relaxed, raised when she's alarmed or excited. This is genuinely a problem for computer vision: a cardinal sitting low on the nest with her crest flat looks distressingly similar to a Brown Thrasher (which has no crest at all), which is exactly how this project's analyzer wound up firing a false CRITICAL on its own protected bird back on April 15.
+- **They don't migrate.** Year-round residents across the eastern US. The Christmas-card image of a cardinal perched in the snow is accurate — they just sit there through January, bright red against gray, unbothered. In the last century they've been slowly expanding their range NORTH, into southern Canada; warmer winters and backyard bird feeders have apparently made the commute optional.
+- **They're named after Catholic cardinals.** The clergy, not the baseball team. Early European colonists saw the scarlet feathers and the pointed crest and thought of the red robes and miters of senior Catholic officials, and the name stuck. Linnaeus made it official in 1760.
+- **State bird of seven US states** — more than any other species. Illinois, Indiana, Kentucky, North Carolina, Ohio, Virginia, West Virginia. They are, demographically speaking, very popular.
+
 ## Timeline
 
 - **Apr 13** — Egg laying begins
@@ -32,15 +46,6 @@ The system did not know this. It fired absence alerts all night, every night, fo
 So I taught it what a cardinal's spring actually looks like. The system now tracks six stages, from nest building through laying and incubation and feeding all the way to the day the chicks fledge. The stage that mattered most was the laying one. Once the system knows she is still laying, it understands that an empty cup at three in the morning is the female cardinal doing exactly what she is supposed to be doing, and it stops paging me about it.
 
 The status badge at the top of this page updates as she moves through these stages.
-
-## Crazy-but-true things about this bird
-
-A few things that came up while I was researching this project and refused to stop surprising me:
-
-- **Female cardinals sing.** In almost every other songbird species in North America, only males sing — the male-sings-to-attract-a-mate pattern is so universal it was assumed to be a rule. Northern Cardinals break it. The female sings from the nest while incubating, and ornithologists think she's telling the male what food to bring her.
-- **His red color comes from what he eats, not his genes.** Cardinal red is carotenoids, absorbed from berries and fruits. A poorly-fed male turns orange, or even yellow. The intensity of his plumage is, functionally, a public nutrition report that the female reads before deciding whether to mate with him.
-- **Males attack their own reflections.** Car side mirrors, windows, shiny bumpers — a territorial male cardinal sees a "rival" that refuses to leave and will hurl himself at it for weeks on end. If you have cardinals in your yard long enough, you will eventually witness a very small, very angry bird losing a grudge match with a Toyota.
-- **They don't migrate.** Year-round residents across the eastern US. The Christmas-card image of a cardinal perched in the snow is accurate — they just sit there through January, bright red against gray, unbothered.
 
 ## What the system sees
 
