@@ -50,6 +50,30 @@ def _pipeline(store, notifier, evidence):
     )
 
 
+def test_hard_timeout_production_default_is_60s():
+    """Pin the production default for ``analyzer_mod.HARD_TIMEOUT_SECONDS``.
+
+    The test_analyzer_timeout_does_not_hang test below monkeypatches the
+    constant to 1 s for speed, which means a future change that drops
+    the default (e.g. accidentally shipping a "1.0" left over from a
+    debug session) wouldn't fail the hang-resilience test — the mocked
+    value would still be 1 s. This guard explicitly pins the production
+    value against the CLAUDE.md §19 timeout budget table.
+
+    If you're deliberately changing the budget (Anthropic p99 shifts,
+    new SDK with different timeout behaviour, etc.), update both this
+    assertion AND the §19 table in the same commit.
+    """
+    from cardinal_nest_monitor import analyzer as _analyzer_mod
+
+    assert _analyzer_mod.HARD_TIMEOUT_SECONDS == 60.0, (
+        f"analyzer_mod.HARD_TIMEOUT_SECONDS changed to "
+        f"{_analyzer_mod.HARD_TIMEOUT_SECONDS}; CLAUDE.md §19 says the "
+        "analyzer.analyze() budget is 60s. Update the §19 table if "
+        "this change is intentional."
+    )
+
+
 async def test_analyzer_timeout_does_not_hang(
     monkeypatch, store, evidence, notifier, reference_jpeg_bytes,
 ):
