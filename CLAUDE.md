@@ -563,6 +563,26 @@ Parity guard: `tests/test_cadence.py::test_main_combined_mode_get_interval_deleg
 
 **Don't regress the mid-wait re-eval.** A future Claude might look at the 15 s poll loop and think "this is overhead — just compute the interval once per cycle." That's Bug A. The polling is the whole point.
 
+**Session-burst (restart-local catch-up, 2026-04-23).** Problem the mid-wait re-eval doesn't solve: if the downloader restarts 10 min into an active absence, the calendar-anchored burst window is already closed (`now - absence_started_ts > burst_duration_seconds`), so the restarted process correctly sees `absence` cadence (60 s) even though we have no fresh evidence of the current scene. Operationally it'd be nice to catch up on snap density during the first 3 min post-restart IF the fresh post-restart snap confirms she's still gone.
+
+`cadence.arm_session_burst_if_absent(store, settings, startup_wall_ts, session_state)` is a one-shot async task launched by both `downloader_loop.run_downloader_service` and `main.run_combined`. It:
+
+1. Polls `MAX(ts) FROM observations` every 5 s until either (a) an observation with `ts > startup_wall_ts` lands — proof the analyzer just processed a post-restart snap — or (b) `max_wait_seconds=60` elapses without one (analyzer likely down).
+2. On (a): reads `state.in_absence`. If True → writes a monotonic deadline `now + burst_duration_seconds` into `session_state["until_monotonic"]`. If False → leaves it None (no catch-up needed).
+3. On (b): skips — no session-burst. We don't fire catch-up based on pre-restart stale state; the whole point is evidence-gating.
+
+`compute_snap_interval`'s precedence expands to `quiet > session-burst > burst > absence > default`. Session-burst only fires when BOTH `state.in_absence=True` AND `now_monotonic < session_state["until_monotonic"]`. `get_interval()` (in both roles) also CLEARS `session_state["until_monotonic"] = None` on mom-return, so a subsequent absence uses the calendar-anchored burst with its fresh `absence_started_ts` — NOT this stale session window. Load-bearing invariants:
+
+- **`absence_started_ts` never gets overwritten on restart.** Biological ground truth stays intact. Session-burst is a separate per-process timer that coexists with (never mutates) persisted state.
+- **Evidence-gated arming.** Session-burst fires only after we have a FRESH post-restart observation. If the analyzer is also down during the grace window, no session-burst. If the fresh snap shows mom on nest, no session-burst. This prevents ghost bursts on stale state.
+- **One-shot per process lifetime.** The arming task runs once and exits; clearing on mom-return makes it impossible to re-arm without a fresh process.
+- **Role parity.** Both downloader and combined modes arm it via the same helper. Parity tested via source-inspect in `tests/test_cadence.py`.
+- **Quiet hours still win.** A deploy during quiet hours doesn't force 30 s cadence — quiet takes precedence over session-burst.
+
+Log labels distinguish the two burst types: `cadence: 60s → 30s (burst)` is calendar-anchored; `cadence: 60s → 30s (session-burst)` is restart-local. If you see `session-burst` followed by a single transition back to `60s (absence)` ~3 min later, that's a healthy restart-catch-up. If you never see `session-burst` log lines, either (a) restarts are happening outside active absences (most common), (b) the analyzer was down within the 60 s grace window, or (c) the fresh snap showed mom on nest.
+
+**Don't weaken the evidence gate.** A future Claude might be tempted to "simplify" by arming session-burst unconditionally at startup if `state.in_absence=True`. That's the exact bug the evidence gate prevents — it re-arms based on STALE pre-restart state, which could be arbitrarily old if the analyzer was also down. Keep the `MAX(ts) > startup_wall_ts` check.
+
 ### 22. Multi-image analysis (2026-04-16)
 
 Previously the analyzer received one downscaled JPEG per snap. Now it receives THREE crops per request:

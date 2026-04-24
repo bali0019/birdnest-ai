@@ -331,11 +331,12 @@ def test_main_combined_mode_get_interval_delegates_to_compute_snap_interval():
 
     main.py's combined-mode cadence must route through the shared
     ``compute_snap_interval`` helper so the documented §21 precedence
-    (quiet > burst > absence > default) actually fires in combined mode.
-    Prior to 2026-04-23 this path branched only on quiet / absence /
-    default — burst was silently dead. Source-inspect rather than a new
-    test module per plan: the check is "does main.py call the helper at
-    all", not "does the helper work" (already covered above).
+    (quiet > session-burst > burst > absence > default) actually fires in
+    combined mode. Prior to 2026-04-23 this path branched only on
+    quiet / absence / default — burst was silently dead. Source-inspect
+    rather than a new test module per plan: the check is "does main.py
+    call the helper at all", not "does the helper work" (already covered
+    above).
     """
     import inspect
 
@@ -346,4 +347,243 @@ def test_main_combined_mode_get_interval_delegates_to_compute_snap_interval():
         "main.py must delegate combined-mode cadence to "
         "cadence.compute_snap_interval — do NOT reintroduce local "
         "branching that drops the §21 burst cadence"
+    )
+
+
+# ── Session-burst (restart-local, evidence-gated catch-up) ─────────────
+# Precedence slot: quiet > SESSION-BURST > burst > absence > default.
+# Armed by cadence.arm_session_burst_if_absent once per process lifetime,
+# only when the first post-startup observation confirms in_absence=True.
+# Distinct from the calendar-anchored `burst` tied to absence_started_ts —
+# see CLAUDE.md §21 for the rationale.
+
+
+def test_compute_snap_interval_session_burst_when_armed_and_absent(settings):
+    """in_absence=True + session burst armed → session-burst label."""
+    now_ts = 1_700_000_000.0
+    now_monotonic = 1000.0
+    state = NestState(
+        in_absence=True,
+        # Absence started 20 min ago — WELL past the calendar-burst window.
+        # The only way this should return burst cadence is via session-burst.
+        absence_started_ts=now_ts - 1200,
+    )
+    interval, label = compute_snap_interval(
+        settings, state, now_ts,
+        session_burst_until_monotonic=now_monotonic + 100,  # armed
+        now_monotonic=now_monotonic,
+    )
+    assert label == "session-burst"
+    assert interval == 30
+
+
+def test_compute_snap_interval_session_burst_yields_to_quiet_hours(settings, monkeypatch):
+    """Quiet hours still win — even a session-burst armed during an
+    absence must defer to the overnight quiet cadence. Battery over
+    reaction time during quiet hours is an explicit design call."""
+    monkeypatch.setattr(settings, "quiet_hours", "00:00-23:59")
+    now_ts = 1_700_000_000.0
+    now_monotonic = 1000.0
+    state = NestState(in_absence=True, absence_started_ts=now_ts - 1200)
+    interval, label = compute_snap_interval(
+        settings, state, now_ts,
+        session_burst_until_monotonic=now_monotonic + 100,  # armed
+        now_monotonic=now_monotonic,
+    )
+    assert label == "quiet"
+    assert interval == 1800
+
+
+def test_compute_snap_interval_session_burst_skipped_when_mom_returned(settings):
+    """Session-burst must NOT fire if the state shows in_absence=False,
+    even if the deadline has not expired yet. This is the evidence gate
+    in reverse — if mom is back, no heightened cadence needed.
+    (Callers should also clear session_burst_until_monotonic on
+    mom-return, but compute_snap_interval itself must also enforce the
+    gate so a race between the state read and the clear can't leak.)
+    """
+    now_ts = 1_700_000_000.0
+    now_monotonic = 1000.0
+    state = NestState(in_absence=False)
+    interval, label = compute_snap_interval(
+        settings, state, now_ts,
+        session_burst_until_monotonic=now_monotonic + 100,  # still armed
+        now_monotonic=now_monotonic,
+    )
+    assert label == "default"
+    assert interval == 300
+
+
+def test_compute_snap_interval_session_burst_expires_at_deadline(settings):
+    """Past the session-burst monotonic deadline → fall through to
+    calendar-anchored precedence. At this point absence_started_ts is
+    also > burst_duration_seconds old (by construction for this test),
+    so we should see `absence`, not `burst` or `session-burst`."""
+    now_ts = 1_700_000_000.0
+    now_monotonic = 1000.0
+    state = NestState(in_absence=True, absence_started_ts=now_ts - 1200)
+    interval, label = compute_snap_interval(
+        settings, state, now_ts,
+        session_burst_until_monotonic=now_monotonic - 1,  # already expired
+        now_monotonic=now_monotonic,
+    )
+    assert label == "absence"
+    assert interval == 60
+
+
+def test_compute_snap_interval_session_burst_defaults_backwards_compatible(settings):
+    """Existing callers that don't pass session_burst kwargs must still
+    get the pre-session-burst precedence — quiet > burst > absence >
+    default. Regression guard for the 9+ existing test_cadence callsites
+    that pre-date session-burst."""
+    now_ts = 1_700_000_000.0
+    state = NestState(in_absence=True, absence_started_ts=now_ts - 30)
+    interval, label = compute_snap_interval(settings, state, now_ts)
+    # No session_burst kwargs → calendar burst fires normally.
+    assert label == "burst"
+    assert interval == 30
+
+
+# ── arm_session_burst_if_absent — evidence-gated arming ─────────────────
+
+
+async def test_arm_session_burst_arms_when_fresh_observation_confirms_absence(
+    store, settings
+):
+    """Happy path: startup at T, a post-T observation lands, state shows
+    in_absence=True at that moment → session_state gets a monotonic
+    deadline roughly equal to now+burst_duration_seconds."""
+    from cardinal_nest_monitor.cadence import arm_session_burst_if_absent
+    from cardinal_nest_monitor.schema import NestObservation
+
+    startup_wall_ts = time.time()
+
+    # Seed a post-startup observation that implies absence. We write it
+    # via the real record() so in_absence flips exactly the way
+    # production does.
+    def _obs(**kw):
+        base = dict(
+            mother_cardinal_present="false",
+            cardinal_on_nest="false",
+            eggs_visible="false",
+            egg_count_estimate=None,
+            nest_visible=True,
+            nest_disturbed="false",
+            species_detected=[],
+            threat_species_detected=[],
+            near_nest_activity=False,
+            direct_nest_interaction=False,
+            confidence=0.9,
+            summary="Nest empty.",
+        )
+        base.update(kw)
+        return NestObservation(**base)
+
+    # Need two records to cross the 120s in_absence threshold.
+    store.record(startup_wall_ts + 0.1, False, None, _obs(
+        mother_cardinal_present="true", cardinal_on_nest="true",
+        species_detected=["northern_cardinal"], summary="On nest.",
+    ), None)
+    state_after = store.record(
+        startup_wall_ts + 130.0, False, None, _obs(), None,
+    )
+    assert state_after.in_absence is True, "test setup: expected absence to flip"
+
+    session_state: dict[str, float | None] = {"until_monotonic": None}
+    # poll_interval tiny so the test completes fast.
+    await arm_session_burst_if_absent(
+        store, settings, startup_wall_ts, session_state,
+        poll_interval=0.01, max_wait_seconds=2.0,
+    )
+    assert session_state["until_monotonic"] is not None, (
+        "arming task should have armed session-burst: fresh observation "
+        "existed and state showed in_absence=True"
+    )
+
+
+async def test_arm_session_burst_does_not_arm_when_mom_on_nest(store, settings):
+    """Fresh observation exists BUT shows mom on nest → session-burst
+    stays disarmed (no catch-up needed; we have fresh evidence she's
+    fine)."""
+    from cardinal_nest_monitor.cadence import arm_session_burst_if_absent
+    from cardinal_nest_monitor.schema import NestObservation
+
+    startup_wall_ts = time.time()
+
+    on_nest = NestObservation(
+        mother_cardinal_present="true",
+        cardinal_on_nest="true",
+        eggs_visible="false",
+        egg_count_estimate=None,
+        nest_visible=True,
+        nest_disturbed="false",
+        species_detected=["northern_cardinal"],
+        threat_species_detected=[],
+        near_nest_activity=False,
+        direct_nest_interaction=False,
+        confidence=0.9,
+        summary="On nest.",
+    )
+    store.record(startup_wall_ts + 0.1, False, None, on_nest, None)
+
+    session_state: dict[str, float | None] = {"until_monotonic": None}
+    await arm_session_burst_if_absent(
+        store, settings, startup_wall_ts, session_state,
+        poll_interval=0.01, max_wait_seconds=2.0,
+    )
+    assert session_state["until_monotonic"] is None, (
+        "arming task must NOT arm when fresh observation shows mom on nest"
+    )
+
+
+async def test_arm_session_burst_skips_when_no_fresh_observation(store, settings):
+    """Analyzer is down → no post-startup observation arrives within the
+    grace window → session-burst stays disarmed. Load-bearing: we don't
+    want to fire restart-catch-up on stale pre-restart state."""
+    from cardinal_nest_monitor.cadence import arm_session_burst_if_absent
+
+    startup_wall_ts = time.time()
+    # No observations seeded. MAX(ts) will stay None throughout.
+
+    session_state: dict[str, float | None] = {"until_monotonic": None}
+    await arm_session_burst_if_absent(
+        store, settings, startup_wall_ts, session_state,
+        poll_interval=0.01, max_wait_seconds=0.2,  # short window for CI speed
+    )
+    assert session_state["until_monotonic"] is None, (
+        "arming task must NOT arm when no fresh observation lands "
+        "within the grace window"
+    )
+
+
+# ── Role parity: both downloader and combined mode must arm session-burst ──
+
+
+def test_downloader_arms_session_burst_on_startup():
+    """downloader_loop.run_downloader_service must launch the
+    arm_session_burst_if_absent task. Regresses if someone rewires the
+    downloader startup to drop the arming task.
+    """
+    import inspect
+
+    from cardinal_nest_monitor import downloader_loop as dl
+
+    src = inspect.getsource(dl)
+    assert "arm_session_burst_if_absent(" in src, (
+        "downloader_loop must launch the session-burst arming task on "
+        "startup — without it, restart catch-up is silently disabled"
+    )
+
+
+def test_combined_mode_arms_session_burst_on_startup():
+    """main.py's run_combined must also launch the arming task. Role
+    parity with the downloader — see CLAUDE.md §21."""
+    import inspect
+
+    from cardinal_nest_monitor import main as main_mod
+
+    src = inspect.getsource(main_mod)
+    assert "arm_session_burst_if_absent(" in src, (
+        "main.py must launch the session-burst arming task so combined "
+        "mode has the same restart-catch-up semantics as split mode"
     )
