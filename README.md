@@ -12,6 +12,12 @@
 
 ---
 
+![Brilliant red male Northern Cardinal perched on the nest rim](evidence/reference/male_cardinal_at_nest.jpg)
+
+*April 26, 08:26 EDT. The MALE cardinal at the nest for the first time in this entire run. Male cardinals don't incubate eggs — that's why he hasn't shown up in any of the previous twelve days of footage. But once the chicks hatch, both parents feed. He arrived less than 16 hours after the hatch alert and was already at the rim, ready to help. The system flagged this as a MEDIUM "unknown bird at nest" before the analyzer could confirm species — bright red is the cardinal's whole identity, but to a model that's only ever seen the brown female on this camera, a saturated red bird showing up at the nest rim is exactly the kind of thing that should ping a human first and get explained second.*
+
+---
+
 ## Timeline
 
 - **Apr 13** — Egg laying begins
