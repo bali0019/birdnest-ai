@@ -1,8 +1,14 @@
 # Cardinal Nest Monitor
 
 > [!NOTE]
-> ### 🥚 Nest Status: **Eggs incubating**
-> Mom is on the nest. System is watching 24/7. *I'll update this page as they hatch and fledge.*
+> ### 🐣 Nest Status: **Chicks hatched**
+> The first hatchling was confirmed at 16:56 EDT on April 25. Mom is feeding now. *I'll update this page as the chicks grow and fledge.*
+
+---
+
+![Female cardinal at the nest with a newly hatched chick visible below her](evidence/reference/cardinal_with_chick.jpg)
+
+*April 25, 19:01 EDT. Mom in profile, bright orange beak, dark eye mask. A pink hatchling is visible in the nest cup right below her beak. The system fired the 🐣 confirmation alert at 16:56 the same afternoon, on the second independent chick sighting (the first was at 14:46).*
 
 ---
 
@@ -10,8 +16,8 @@
 
 - **Apr 13** — Egg laying begins
 - **Apr 14** — Incubation begins
-- **Apr 25 – 27** — Hatch (expected)
-- **May 5 – 7** — Fledge (expected)
+- **Apr 25** — **Hatch confirmed** (16:56 EDT)
+- **May 4 – 6** — Fledge (expected)
 
 ---
 
