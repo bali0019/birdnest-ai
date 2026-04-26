@@ -14,7 +14,7 @@
 
 ![Brilliant red male Northern Cardinal perched on the nest rim](evidence/reference/male_cardinal_at_nest.jpg)
 
-*April 26, 08:26 EDT. The male cardinal at the nest for the first time, less than 16 hours after the hatch alert. Both parents feed once chicks hatch. The system flagged him as MEDIUM "unknown bird at nest" — to a model that has only ever seen the brown female on this camera, a brilliantly red bird suddenly at the rim is exactly the kind of thing worth waking a human for.*
+*April 26, 08:26 EDT. The male cardinal at the nest for the first time, less than 16 hours after the hatch. He'll be feeding alongside the female now.*
 
 ---
 
