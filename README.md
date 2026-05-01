@@ -1,8 +1,8 @@
 # Cardinal Nest Monitor
 
 > [!NOTE]
-> ### 🐣 Nest Status: **Chicks hatched**
-> The first hatchling was confirmed at 16:56 EDT on April 25. Mom is feeding now. *I'll update this page as the chicks grow and fledge.*
+> ### 🐣 Nest Status: **Day 5 of feeding**
+> Hatch confirmed April 25 at 16:56 EDT. Both parents are feeding two visible chicks. *I'll update this page as the chicks grow and fledge.*
 
 ---
 
@@ -23,6 +23,7 @@
 - **Apr 13** — Egg laying begins
 - **Apr 14** — Incubation begins
 - **Apr 25** — **Hatch confirmed** (16:56 EDT)
+- **Apr 26** — Male cardinal first seen at the nest, feeding alongside mom
 - **May 4 – 6** — Fledge (expected)
 
 ---
