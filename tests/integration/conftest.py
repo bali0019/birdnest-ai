@@ -39,8 +39,17 @@ from cardinal_nest_monitor.state import StateStore
 # but the image IS attached to the Discord post, so we match the image
 # to the scenario to avoid the confusing "thrasher photo captioned as
 # cardinal" UX the user flagged on 2026-04-15.
+#
+# Phase 7 (2026-05-01): assets moved from the flat
+# ``evidence/reference/`` layout to ``evidence/reference/<species_slug>/``.
+# These integration fixtures are cardinal-specific by design (they
+# verify Discord embeds + threat-scenario routing under the cardinal
+# profile), so they hardcode the cardinal slug. Tests under a non-
+# cardinal profile would either not need these visuals or would
+# parametrize over the active profile's reference assets.
 _REFERENCE_DIR: Path = (
-    Path(__file__).resolve().parents[2] / "evidence" / "reference"
+    Path(__file__).resolve().parents[2]
+    / "evidence" / "reference" / "northern_cardinal"
 )
 REFERENCE_THRASHER: Path = _REFERENCE_DIR / "historical_thrasher_1.jpg"
 REFERENCE_CARDINAL: Path = _REFERENCE_DIR / "cardinal_on_nest.jpg"

@@ -15,7 +15,7 @@
 
 ---
 
-![Brown Thrasher stealing an egg from the cardinal nest](evidence/reference/thrasher_stealing_egg_highlighted.gif)
+![Brown Thrasher stealing an egg from the cardinal nest](evidence/reference/northern_cardinal/thrasher_stealing_egg_highlighted.gif)
 
 *The attack that started this project. A Brown Thrasher at the cardinal's nest, four seconds from rim to gone with an egg in its beak.*
 
@@ -51,19 +51,19 @@ Most of the time, the answer is boring.
 
 ### Mom is home
 
-![Female cardinal incubating on the nest](evidence/reference/cardinal_on_nest.jpg)
+![Female cardinal incubating on the nest](evidence/reference/northern_cardinal/cardinal_on_nest.jpg)
 
 *She's on the nest. The system notes this, confirms her presence, and checks back in five minutes. No alert. This is the good outcome, repeated two hundred times a day.*
 
 ### Something is at the nest
 
-![Brown Thrasher near the cardinal nest](evidence/reference/historical_thrasher_1.jpg)
+![Brown Thrasher near the cardinal nest](evidence/reference/northern_cardinal/historical_thrasher_1.jpg)
 
 *A thrasher. The system identifies it by the long tail, the streaked breast, the absence of a crest. It fires a HIGH alert to my phone immediately. Before the notification arrives, a second model, Claude Opus 4.7, reviews the same image cold, with no knowledge of the first model's verdict. If Opus disagrees, the alert is suppressed. If Opus agrees, it goes through. This one went through.*
 
 ### Mom is gone
 
-![Empty nest with no bird present](evidence/reference/empty_nest.jpg)
+![Empty nest with no bird present](evidence/reference/northern_cardinal/empty_nest.jpg)
 
 *The nest is empty. She left to forage, probably. The system tightens the snap cadence from every five minutes to every sixty seconds. This is the predation risk window. If a threat shows up during this window, the alert fires instantly. If nothing happens but she's still gone after five minutes, a MEDIUM alert lets me know.*
 
@@ -303,7 +303,7 @@ python -m cardinal_nest_monitor.tools.test_discord
 
 # Run the full pipeline against a single local JPEG, no live camera needed.
 # Useful when iterating on the analyzer prompt.
-python -m cardinal_nest_monitor.tools.dryrun --image evidence/reference/historical_thrasher_1.jpg
+python -m cardinal_nest_monitor.tools.dryrun --image evidence/reference/northern_cardinal/historical_thrasher_1.jpg
 
 # Pause snap capture before walking near the nest. Cleared automatically.
 python -m cardinal_nest_monitor.tools.pause 10        # pause for 10 minutes
@@ -416,7 +416,7 @@ src/cardinal_nest_monitor/
 
 launchd/               macOS LaunchAgent plists
 tests/                 Unit + integration test suite
-evidence/reference/    Curated regression images for species ID validation
+evidence/reference/<species_slug>/    Curated regression images for species ID validation (cardinal-only at present; populated per profile)
 ```
 
 ##

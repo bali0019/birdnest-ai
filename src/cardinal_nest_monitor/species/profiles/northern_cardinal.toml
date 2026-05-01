@@ -159,10 +159,11 @@ attending_parent_returned_title = "Mother returned to nest"
 attending_parent_returned_summary = "Female cardinal visible on or near the nest after an extended absence."
 
 # ── Reference assets (regression suite + dryrun image paths) ───────────
+# Phase 7 (2026-05-01): assets moved from the flat `evidence/reference/`
+# layout into this species-scoped directory. All paths below are relative
+# to `directory`; consumers join via Path(directory) / filename.
 [reference_assets]
 directory = "evidence/reference/northern_cardinal"
-# Phase 7 will move the existing reference images under this directory.
-# For Phase 2 these paths are recorded but not yet physically populated.
 target_on_nest = [
     "cardinal_on_nest.jpg",
 ]
@@ -175,7 +176,22 @@ threat_examples = [
 empty_nest = [
     "empty_nest.jpg",
 ]
+# Lifecycle regression images live under lifecycle/. Each .jpg has a
+# paired .expected.json beside it (and a .source.json with attribution).
+# tools/lifecycle_regression.py walks this list and runs the real
+# analyzer against each image.
 lifecycle_regression = [
-    # Cardinal lifecycle regression images live under lifecycle/ per §23
-    # — populated by Phase 7. Paths are relative to `directory` above.
+    "lifecycle/wm_chick_brood_01.jpg",
+    "lifecycle/wm_chick_hatchling_01.jpg",
+    "lifecycle/wm_chick_hatchling_egg_01.jpg",
+    "lifecycle/wm_chick_multiple_01.jpg",
+    "lifecycle/wm_chick_week_old_01.jpg",
+    "lifecycle/wm_chicks_begging_02.jpg",
+    "lifecycle/wm_chicks_with_mom_01.jpg",
+    "lifecycle/wm_incubating_01.jpg",
+    "lifecycle/wm_incubating_02.jpg",
+    "lifecycle/wm_incubating_03.jpg",
+    "lifecycle/wm_mom_protecting_01.jpg",
+    "lifecycle/wm_mom_returning_01.jpg",
+    "lifecycle/wm_mom_returning_02.jpg",
 ]

@@ -1,12 +1,19 @@
 """Lifecycle regression harness.
 
-Runs the REAL analyzer (actual Anthropic API call) on each curated reference
-image in `evidence/reference/lifecycle/` and compares the returned
-NestObservation against the `.expected.json` ground-truth alongside each
-image. Prints a pass/fail table and exits non-zero if ANY image fails.
+Runs the REAL analyzer (actual Anthropic API call) on each curated
+reference image listed in the active species profile's
+``reference_assets.lifecycle_regression`` array, and compares each
+returned NestObservation against the ``.expected.json`` ground-truth
+alongside the image. Prints a pass/fail table and exits non-zero if
+ANY image fails.
 
-This is the HARD GATE before enabling `LIFECYCLE_TRACKING_ENABLED=true` in
-production. If any image fails, the feature does not ship.
+This is the HARD GATE before enabling ``LIFECYCLE_TRACKING_ENABLED=true``
+in production. If any image fails, the feature does not ship.
+
+Phase 7 (2026-05-01): paths now resolve through the profile rather
+than a flat ``evidence/reference/lifecycle/`` constant. Cardinal
+profile ships 13 images under ``evidence/reference/northern_cardinal/
+lifecycle/``; new profiles author their own list.
 
 Cost: ~$0.02-0.03 per image × ~13 images = ~$0.30-0.50 per full run.
 
@@ -14,6 +21,7 @@ Usage:
   python -m cardinal_nest_monitor.tools.lifecycle_regression
   python -m cardinal_nest_monitor.tools.lifecycle_regression --verbose
   python -m cardinal_nest_monitor.tools.lifecycle_regression --image <path>
+  python -m cardinal_nest_monitor.tools.lifecycle_regression --dir <path>
 """
 
 from __future__ import annotations
@@ -27,13 +35,48 @@ from pathlib import Path
 
 from cardinal_nest_monitor import analyzer as analyzer_mod
 from cardinal_nest_monitor.schema import NestObservation
+from cardinal_nest_monitor.species import get_species_profile
 
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_LIFECYCLE_DIR = (
-    Path(__file__).resolve().parents[3] / "evidence" / "reference" / "lifecycle"
-)
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _resolve_lifecycle_dir() -> Path:
+    """Return the lifecycle-regression image directory for the active
+    species profile.
+
+    The profile's ``reference_assets.directory`` is repo-relative, e.g.
+    ``evidence/reference/northern_cardinal``; the lifecycle subdir is
+    inferred as ``<directory>/lifecycle``. Profiles whose
+    ``lifecycle_regression`` array uses paths inside that subdir all
+    resolve consistently.
+
+    Raises FileNotFoundError if the resolved directory does not exist —
+    species profiles whose assets haven't been collected yet should fail
+    fast here rather than silently running on zero images.
+    """
+    profile = get_species_profile()
+    rel = Path(profile.reference_assets.directory) / "lifecycle"
+    abs_path = _REPO_ROOT / rel
+    if not abs_path.exists():
+        raise FileNotFoundError(
+            f"lifecycle reference directory not found: {abs_path}. "
+            f"profile={profile.species.slug!r} declares "
+            f"reference_assets.directory={profile.reference_assets.directory!r}, "
+            "but the on-disk lifecycle/ subdirectory does not exist. "
+            "Either populate the directory with curated images and "
+            "paired .expected.json files, or run a different profile."
+        )
+    return abs_path
+
+
+# Lazy default — computed when --dir is omitted, NOT at import time.
+# Importing this module under a profile that has no lifecycle assets
+# (e.g. american_robin until Phase 7+) must not raise.
+_DEFAULT_LIFECYCLE_DIR = None  # populated by main()
 
 
 class CheckResult:
@@ -195,8 +238,12 @@ async def run(lifecycle_dir: Path, verbose: bool = False, only: str | None = Non
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--dir", type=Path, default=_DEFAULT_LIFECYCLE_DIR,
-        help="Directory containing reference images + .expected.json",
+        "--dir", type=Path, default=None,
+        help=(
+            "Directory containing reference images + .expected.json. "
+            "Defaults to the active species profile's "
+            "reference_assets.directory + '/lifecycle'."
+        ),
     )
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument(
@@ -209,7 +256,8 @@ def main() -> int:
         level=logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    return asyncio.run(run(args.dir, args.verbose, args.image))
+    target_dir = args.dir if args.dir is not None else _resolve_lifecycle_dir()
+    return asyncio.run(run(target_dir, args.verbose, args.image))
 
 
 if __name__ == "__main__":

@@ -24,7 +24,8 @@ from cardinal_nest_monitor.schema import NestObservation, Severity
 
 
 _LIFECYCLE_DIR = (
-    Path(__file__).resolve().parents[2] / "evidence" / "reference" / "lifecycle"
+    Path(__file__).resolve().parents[2]
+    / "evidence" / "reference" / "northern_cardinal" / "lifecycle"
 )
 
 
