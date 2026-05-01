@@ -27,8 +27,8 @@ attending_parent_label = "female cardinal"
 young_label = "chicks"
 
 [prompt_context]
-habitat = "backyard rose bush in Marietta, Georgia"
-camera = "low to the ground in dense foliage near a back door"
+habitat = "backyard rose bush in a residential garden"
+camera = "low to the ground in dense foliage near the home"
 nest_type = "open cup woven into a rose bush"
 threat_history = "A Brown Thrasher has previously attacked this nest and stolen at least one egg — threat detection is life-or-death for the chicks."
 

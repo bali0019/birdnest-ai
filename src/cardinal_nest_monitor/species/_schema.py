@@ -94,14 +94,14 @@ class PromptContext(BaseModel):
         ...,
         description=(
             "One-line description of where the nest is physically located. "
-            "e.g. 'backyard rose bush in Marietta, Georgia'."
+            "e.g. 'backyard rose bush in a residential garden'."
         ),
     )
     camera: str = Field(
         ...,
         description=(
             "How the camera is mounted and what it can see. e.g. 'low to "
-            "the ground in dense foliage near a back door'."
+            "the ground in dense foliage near the home'."
         ),
     )
     nest_type: str = Field(

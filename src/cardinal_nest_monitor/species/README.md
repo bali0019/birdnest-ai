@@ -55,8 +55,8 @@ attending_parent_label  # "female cardinal", "robin parent" — used in
 young_label         # "chicks", "nestlings" — used in lifecycle prompts
 
 [prompt_context]
-habitat             # "backyard rose bush in Marietta, Georgia"
-camera              # "low to the ground in dense foliage near a back door"
+habitat             # "backyard rose bush in a residential garden"
+camera              # "low to the ground in dense foliage near the home"
 nest_type           # "open cup woven into a rose bush" — informs nest-disturbed
                     # / direct_nest_interaction judgments
 threat_history      # optional; appended to the analyzer opener when set
