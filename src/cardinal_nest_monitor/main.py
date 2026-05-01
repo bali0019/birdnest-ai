@@ -39,6 +39,7 @@ from cardinal_nest_monitor.events import evaluate
 from cardinal_nest_monitor.evidence import EvidenceWriter
 from cardinal_nest_monitor.notifier import Notifier
 from cardinal_nest_monitor.schema import NestObservation, Severity
+from cardinal_nest_monitor.species.loader import bootstrap_species_profile
 from cardinal_nest_monitor.state import StateStore
 
 log = logging.getLogger(__name__)
@@ -626,6 +627,7 @@ async def run_combined() -> int:
     _setup_logging()
     settings = get_settings()
     settings.ensure_dirs()
+    bootstrap_species_profile()
 
     blink = await connect(prompt_2fa=False)
     blink_holder: dict[str, Any] = {"blink": blink}

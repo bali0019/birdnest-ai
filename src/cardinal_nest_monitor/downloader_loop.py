@@ -62,6 +62,7 @@ from cardinal_nest_monitor.cadence import (
 )
 from cardinal_nest_monitor.config import get_settings
 from cardinal_nest_monitor.notifier import Notifier
+from cardinal_nest_monitor.species.loader import bootstrap_species_profile
 from cardinal_nest_monitor.state import StateStore
 
 log = logging.getLogger(__name__)
@@ -203,6 +204,7 @@ async def run_downloader_service() -> int:
     _setup_logging()
     settings = get_settings()
     settings.ensure_dirs()
+    bootstrap_species_profile()
 
     # Open Blink first — if this fails (stale creds / network), we want the
     # process to exit before we post a misleading "online" embed.

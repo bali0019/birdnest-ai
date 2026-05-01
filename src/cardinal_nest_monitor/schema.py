@@ -367,9 +367,10 @@ def build_nest_tool(profile) -> dict[str, Any]:
                     "type": "boolean",
                     "description": (
                         f"True when the {attending} is at the nest with a food "
-                        "item visible in her beak (insect, caterpillar, berry, or "
-                        f"a bulge suggesting food). False if the {attending} is "
-                        "present without visible food, or if no target bird is present."
+                        f"item visible in the {attending}'s beak (insect, "
+                        "caterpillar, berry, or a bulge suggesting food). False if "
+                        f"the {attending} is present without visible food, or if no "
+                        "target bird is present."
                     ),
                 },
                 "confidence": {

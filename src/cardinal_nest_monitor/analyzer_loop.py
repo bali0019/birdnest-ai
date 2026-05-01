@@ -48,6 +48,7 @@ from cardinal_nest_monitor.main import (
     watchdog_scheduler,
 )
 from cardinal_nest_monitor.notifier import Notifier
+from cardinal_nest_monitor.species.loader import bootstrap_species_profile
 from cardinal_nest_monitor.state import StateStore
 
 log = logging.getLogger(__name__)
@@ -224,6 +225,7 @@ async def run_analyzer_service() -> int:
     _setup_logging()
     settings = get_settings()
     settings.ensure_dirs()
+    bootstrap_species_profile()
 
     spool_dir = settings.spool_dir
     spool_dir.mkdir(parents=True, exist_ok=True)

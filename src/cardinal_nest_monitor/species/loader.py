@@ -119,3 +119,16 @@ def clear_species_profile_cache() -> None:
     the profile is immutable.
     """
     _get_species_profile_cached.cache_clear()
+
+
+def bootstrap_species_profile() -> SpeciesProfile:
+    """Eagerly load + validate the active species profile at service startup.
+
+    Call this from each service bootstrap coroutine BEFORE launching any
+    loops, so a malformed profile crashes the service immediately with a
+    pydantic ValidationError instead of waiting for the first snap to
+    surface it. Subsequent calls to get_species_profile() return the cached
+    instance — the lru_cache makes the eager call free for the rest of the
+    process lifetime.
+    """
+    return get_species_profile()
