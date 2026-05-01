@@ -26,3 +26,40 @@ def disable_quiet_hours_for_unit_tests(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "quiet_hours", "")
     yield
+
+
+@pytest.fixture
+def use_profile(request, monkeypatch):
+    """Parametrized fixture that swaps the active species profile for a
+    test body. Use as::
+
+        @pytest.mark.parametrize(
+            "use_profile",
+            ["northern_cardinal", "american_robin"],
+            indirect=True,
+        )
+        def test_something(use_profile):
+            profile = use_profile  # the loaded SpeciesProfile
+
+    Phase 8/9 — these are the behavior-level regression guards Codex
+    asked for before Phase 5 starts rewriting the analyzer prompts. They
+    pin alert copy and rule_id taxonomy under both profiles so any drift
+    introduced by prompt rendering will surface as a test failure.
+    """
+    from cardinal_nest_monitor.species import (
+        clear_species_profile_cache,
+        get_species_profile,
+    )
+    from cardinal_nest_monitor.species.loader import builtin_profile_path
+
+    slug = request.param
+    monkeypatch.setattr(
+        get_settings(),
+        "species_profile_path",
+        builtin_profile_path(slug),
+    )
+    clear_species_profile_cache()
+    try:
+        yield get_species_profile()
+    finally:
+        clear_species_profile_cache()
