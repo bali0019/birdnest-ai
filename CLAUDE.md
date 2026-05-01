@@ -1,17 +1,27 @@
-# Cardinal Nest Monitor — Project Memory for Claude
+# Birdnest AI — Project Memory for Claude
 
 > Read this file FIRST when starting work on this project. It captures everything you need to be useful immediately.
 
 ---
 
+## Reading this file under the generic refactor
+
+This branch (`generic-nest-monitor`) is the species-agnostic version of the original cardinal-only deployment. The Python package and runtime are still named `cardinal_nest_monitor` for backwards compatibility, and most of this file was written during the cardinal-only era.
+
+When you read about **Brown Thrashers**, **Marietta, Georgia**, the **female cardinal**, the **rose bush**, the `Hummer_CAGE_CAM` camera, **April 2026 incidents**, or specific dollar/snap/cadence numbers, treat them as **example deployment values from the cardinal profile** — the test deployment that found and fixed every hard-won lesson recorded below. They are not requirements. The architecture, rules, hard-won knowledge in §1–§30, and operational guidance apply to any open-cup nesting passerine running through the profile-driven runtime.
+
+Species-specific behavior is now driven entirely by the active TOML profile. Two profiles ship: `northern_cardinal` (the tuned reference; alert copy and field marks byte-identical to pre-refactor) and `american_robin` (the structural proof). See [`src/cardinal_nest_monitor/species/README.md`](src/cardinal_nest_monitor/species/README.md) for the authoring guide and the test contract that pins profile-driven behavior.
+
+---
+
 ## What this project is
 
-Real-time AI threat-detection for a backyard Northern Cardinal nest in Marietta, Georgia. The user has a Blink Outdoor camera (`Hummer_CAGE_CAM`) pointed at a cardinal nest in a rose bush near the back door. A **Brown Thrasher** has been observed tampering with the eggs at least once. The user asked us to build a system that pings Discord **only when something actionable is happening at the nest** — predator at nest, direct nest interaction, or egg disappearance. False positives (yard motion, mockingbirds, brief mother absences) must NOT generate alerts.
+Real-time AI threat-detection for an open-cup nesting passerine. A Blink Outdoor camera points at the nest. The system pings Discord **only when something actionable is happening at the nest** — predator at nest, direct nest interaction, or egg disappearance. False positives (yard motion, ambient bird visits, brief parent absences) must NOT generate alerts.
 
-This is **emotionally important to the user.** It is not a fun project. The cardinal eggs are at real risk; the user is a protective parent of the nest and has consented to operational complexity (battery swaps every ~10–14 days, ~$90/month Anthropic spend) in exchange for reliable monitoring.
+The reference deployment (cardinal profile) protects a backyard Northern Cardinal nest in Marietta, Georgia, against a Brown Thrasher that was observed tampering with the eggs. That deployment is **emotionally important to its user**: real eggs at real risk, with the user as a protective parent of the nest, consenting to operational complexity (battery swaps every ~10–14 days, ~$90/month Anthropic spend) in exchange for reliable monitoring. New profiles inherit the same architecture and the same tradeoffs.
 
-**As of 2026-04-15 the system is tuned for single-tier Sonnet + dynamic absence-aware cadence:**
-- Blink motion detection is OFF in the Blink app (mom's movements on the nest were triggering constant false-positive motion events). `motion_loop` still runs but finds nothing.
+**As of 2026-04-15 the cardinal deployment was tuned for single-tier Sonnet + dynamic absence-aware cadence** (these are the numbers any open-cup passerine deployment will start from until profile-specific tuning diverges):
+- Blink motion detection is OFF in the Blink app (the cardinal's own movements on the nest were triggering constant false-positive motion events). `motion_loop` still runs but finds nothing.
 - Every snap → `claude-sonnet-4-6` directly (no Haiku prefilter). Single model call per snap.
 - Cadence is **dynamic**: 5 min default, **1 min when `state.in_absence=True`** (peak predation risk window), 30 min during quiet hours (23:00–05:00 EDT).
 - See "Cadence configuration" below for current values.
@@ -322,7 +332,7 @@ Four real-world images live in `evidence/reference/`:
 ```bash
 cd $PROJECT_ROOT
 source venv/bin/activate
-for img in evidence/reference/historical_thrasher_{1,2,3}.jpg; do
+for img in evidence/reference/northern_cardinal/historical_thrasher_{1,2,3}.jpg; do
   echo "=== $img ==="
   python -m cardinal_nest_monitor.tools.dryrun --image "$img" --escalate
 done
@@ -707,7 +717,7 @@ Idempotent; refuses to overwrite set values without `--force`. For the current m
 
 **Real-image regression suite (hard gate before enabling):**
 
-`evidence/reference/lifecycle/` has 13 curated Wikimedia Commons images covering incubation + chick stages, each with `.expected.json` ground truth. Before setting `LIFECYCLE_TRACKING_ENABLED=true`:
+`evidence/reference/northern_cardinal/lifecycle/` has 13 curated Wikimedia Commons images covering incubation + chick stages, each with `.expected.json` ground truth. Phase 7 (2026-05-01) moved these from the flat `evidence/reference/lifecycle/` layout into the cardinal species subdirectory; `tools/lifecycle_regression.py` resolves the directory through the active profile's `reference_assets.directory` rather than the legacy flat path. Before setting `LIFECYCLE_TRACKING_ENABLED=true`:
 
 ```bash
 python -m cardinal_nest_monitor.tools.lifecycle_regression

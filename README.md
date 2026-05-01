@@ -1,90 +1,76 @@
-# Cardinal Nest Monitor
+# Birdnest AI
 
-> [!NOTE]
-> ### 🥚 Nest Status: **Eggs incubating**
-> Mom is on the nest. System is watching 24/7. *I'll update this page as they hatch and fledge.*
+A profile-driven AI nest monitor for open-cup nesting passerines. Adaptive snap cadence, two-model species ID with blind verification, lifecycle tracking from egg-laying through fledge, Discord alerts on five channels.
 
----
-
-## Timeline
-
-- **Apr 13** — Egg laying begins
-- **Apr 14** — Incubation begins
-- **Apr 25 – 27** — Hatch (expected)
-- **May 5 – 7** — Fledge (expected)
+The Python package and runtime are still named `cardinal_nest_monitor` for compatibility with the original cardinal-only deployment that this branch generalizes. New profiles drop in as TOML — see [`src/cardinal_nest_monitor/species/README.md`](src/cardinal_nest_monitor/species/README.md) for the authoring guide.
 
 ---
 
-![Brown Thrasher stealing an egg from the cardinal nest](evidence/reference/northern_cardinal/thrasher_stealing_egg_highlighted.gif)
+## What this is
 
-*The attack that started this project. A Brown Thrasher at the cardinal's nest, four seconds from rim to gone with an egg in its beak.*
+A static camera (Blink Outdoor) points at an open-cup nest. Every fresh snap goes through Claude Sonnet 4.6 for structured analysis: is the attending parent present, are eggs visible, is anything threatening near the nest, are chicks visible, is there a feeding event. The result drives a rules engine that decides whether to fire a Discord alert, whether to advance the lifecycle stage, and whether the threat warrants a blind second opinion from Claude Opus 4.7.
+
+The system is tuned around three properties that matter for protecting an active nest:
+
+- **Reaction time scales with risk.** When the attending parent is on the nest, a five-minute snap interval is enough. When the parent leaves to forage, the interval drops to one minute. For the first three minutes of any absence — the highest-risk window for a fast in-and-out predator — it tightens to thirty seconds.
+- **The pipeline is split for resilience.** A downloader process and an analyzer process run as independent macOS LaunchAgents and coordinate through an atomic-rename spool on disk. The downloader never stops capturing snaps, even when the analyzer crashes, restarts, or runs out of API credits. When the analyzer comes back, it drains whatever piled up.
+- **Threat alerts get a second look.** CRITICAL and HIGH alerts trigger a blind Opus 4.7 verification pass — same image, same prompt, no hint of what Sonnet said. Opus can suppress, downgrade, or confirm.
 
 ---
 
-The female cardinal chose the rose bush by the back door. It was a terrible location, strategically speaking: low to the ground, close to foot traffic, visible from the kitchen window. But she was not consulting anyone. She built the nest in three days, a tight cup of twigs and grass wedged into the thorns, and by the second week of April there were eggs in it.
+## Profiles
 
-I know this because of the camera. A Blink Outdoor, mounted to the siding, pointed at the bush. It was there to keep an eye on Lady, my dog, when I let her out back. The cardinal repurposed it.
+A species profile is a single TOML file. The runtime loads one profile at startup (selected via `SPECIES_PROFILE_PATH`) and treats it as immutable for the process lifetime. Two profiles ship with the package:
 
-The Brown Thrasher came twice. The first time, it landed on the bush, looked around, and left. Reconnaissance. The second time, it landed on the rim of the nest, reached in with its beak, and left with an egg. The whole thing took about four seconds. I was inside the house, ten feet away, making coffee.
+| Profile | Status |
+|---|---|
+| `northern_cardinal` | Tuned reference deployment. The original cardinal-only system; alert copy, field marks, and lifecycle thresholds are byte-identical to the pre-genericization runtime. |
+| `american_robin` | Structural proof profile. Different threat list (American Crow, Cooper's Hawk, raccoon), different attending-parent label, different lifecycle timing. Reference assets aren't yet collected — using this profile in production requires populating habitat/camera strings and reference images. |
 
-I found the footage that evening. I watched it several times.
-
-Then I started writing code.
-
-The system was live within a few days. Almost immediately, it created a different kind of panic. The cardinal was not on the nest at night. The camera showed an empty cup, hour after hour, from dusk until morning. The eggs were sitting in the open air, uncovered, cooling. I was convinced they were done for.
-
-It took some reading to understand what was happening. Female cardinals lay one egg per day over three to four days. During the laying phase, they do not incubate. They visit the nest briefly to lay, then leave. Full incubation, the patient sitting that lasts eleven to thirteen days, only begins after the last egg is down. The cardinal was not neglecting her eggs. She was not finished laying them yet.
-
-The system did not know this. It fired absence alerts all night, every night, for the first four days. I had built a machine to protect eggs from a thrasher, and the first thing it did was convince me the mother had abandoned them.
-
-So I taught it what a cardinal's spring actually looks like. The system now tracks six stages, from nest building through laying and incubation and feeding all the way to the day the chicks fledge. The stage that mattered most was the laying one. Once the system knows she is still laying, it understands that an empty cup at three in the morning is the female cardinal doing exactly what she is supposed to be doing, and it stops paging me about it.
-
-The status badge at the top of this page updates as she moves through these stages.
+The profile drives every species-specific decision the analyzer, prefilter, rules engine, state machine, lifecycle predictor, notifier, and verifier make. Generic Python; species-specific TOML.
 
 ---
 
 ## What the system sees
 
-The camera takes a fresh photo on a schedule that adapts to what's happening. Five minutes when she's on the nest. One minute when she's away. Thirty seconds for the first three minutes after she leaves, when the predation risk is highest. Thirty minutes overnight, when she sleeps on the eggs. Each image goes to Claude Sonnet 4.6, Anthropic's vision model, which returns a structured observation: is the cardinal present, are the eggs visible, is anything threatening near the nest.
+Each snap goes to Claude Sonnet 4.6 as three crops of the same frame: the full view, a tight center crop on the nest cup, and a smaller overview for scene context. The model returns a structured observation that drives all downstream decisions.
 
-Most of the time, the answer is boring.
-
-### Mom is home
+### Attending parent on nest
 
 ![Female cardinal incubating on the nest](evidence/reference/northern_cardinal/cardinal_on_nest.jpg)
 
-*She's on the nest. The system notes this, confirms her presence, and checks back in five minutes. No alert. This is the good outcome, repeated two hundred times a day.*
+*The system notes presence, confirms it, and checks back in five minutes. No alert. This is the default outcome, repeated hundreds of times a day. (Cardinal profile, April 2026.)*
 
 ### Something is at the nest
 
 ![Brown Thrasher near the cardinal nest](evidence/reference/northern_cardinal/historical_thrasher_1.jpg)
 
-*A thrasher. The system identifies it by the long tail, the streaked breast, the absence of a crest. It fires a HIGH alert to my phone immediately. Before the notification arrives, a second model, Claude Opus 4.7, reviews the same image cold, with no knowledge of the first model's verdict. If Opus disagrees, the alert is suppressed. If Opus agrees, it goes through. This one went through.*
+*A non-target species at or near the nest. The system identifies it from per-threat field marks declared in the active profile. CRITICAL or HIGH alerts trigger blind Opus verification before they fire. (Cardinal profile — the threat is a Brown Thrasher, the canonical predator the cardinal profile was tuned against.)*
 
-### Mom is gone
+### Empty cup
 
 ![Empty nest with no bird present](evidence/reference/northern_cardinal/empty_nest.jpg)
 
-*The nest is empty. She left to forage, probably. The system tightens the snap cadence from every five minutes to every sixty seconds. This is the predation risk window. If a threat shows up during this window, the alert fires instantly. If nothing happens but she's still gone after five minutes, a MEDIUM alert lets me know.*
+*The attending parent is away. The system tightens the snap cadence — first 30 seconds for the burst window, then 60 seconds — and watches for a threat or a return.*
 
 ---
 
-## What happens when something goes wrong
+## Severity levels
 
-| Level | What the system saw | What I should do |
+| Level | What the analyzer saw | What the system does |
 |---|---|---|
-| **CRITICAL** | A predator's beak or body inside the nest cup | **The backyard is the production environment and you just got paged** |
-| **HIGH** | A thrasher, blue jay, or squirrel near the nest | Pull up the camera. Decide whether to go outside. |
-| **MEDIUM** | The cardinal has been gone for five minutes or more | Probably fine. Probably. The system is watching closer now. |
-| **LOW** | She came back | Stand down. |
+| **CRITICAL** | A non-target beak or body inside the nest cup | Blind Opus verification, then page the urgent channel |
+| **HIGH** | A threat species near the nest | Blind Opus verification, then alert |
+| **MEDIUM** | Attending parent away from nest for 5+ minutes | Alert with a bucketed elapsed-minutes label |
+| **LOW** | Attending parent returned, or a lifecycle transition | Quiet notification, never an alarm |
+
+User-facing alert text comes from `profile.alert_copy` — the cardinal profile reads "Mother away from nest for 5+ minutes"; the robin profile reads "Parent away from nest for 5+ minutes".
 
 ---
 
 ## How it works
 
-There are two services running on a computer that stays on all day. The first one does nothing but take photos and save them to disk. The second one does everything else: analyze the image, decide if it's a threat, check with a second model if it is, post to Discord, log the observation, update the state.
-
-They are separate on purpose. On April 15, 2026, a stuck API call froze the entire system for three hours during peak daylight. No photos, no alerts, nothing. The eggs were unmonitored while the sun was out and the thrashers were active. Splitting the services means the camera never stops taking pictures, even if the analysis side crashes, restarts, or runs out of credits. When the analyzer comes back, it works through whatever piled up while it was gone.
+Two services running on a host that stays on. The first one captures snaps; the second one analyzes them. They are decoupled on purpose. A stuck Anthropic API call in April 2026 froze a single combined process for three hours during peak daylight before the split. Splitting them means the camera never stops, even if the analysis side hangs, restarts, or runs out of credits.
 
 ```
 ┌──────────────────────────────┐
@@ -114,27 +100,23 @@ They are separate on purpose. On April 15, 2026, a stuck API call froze the enti
 └──────────────────────────────┘
 ```
 
-The cadence adapts to the situation. When she's on the nest, a photo every five minutes is enough. When she's away foraging, the interval drops to sixty seconds. Overnight, when cardinals sleep on their eggs, it relaxes to every thirty minutes.
+The cadence adapts to the situation. When the attending parent is on the nest, a photo every five minutes is enough. When the parent is away foraging, the interval drops to sixty seconds. Overnight, when the parent broods through the dark, it relaxes to every thirty minutes.
 
 ### The night vision problem
 
-The camera switches to infrared after dark. The images turn grayscale. And in grayscale, the cardinal's brown plumage becomes indistinguishable from the nest straw. The AI kept reporting "nest empty" at moderate confidence because it genuinely could not tell the difference between a bird and the material she was sitting on.
+The Blink camera switches to infrared after dark. The images go grayscale, and a brown-plumaged passerine becomes nearly indistinguishable from nest straw or mud. Early on the analyzer kept reporting "nest empty" at moderate confidence on IR frames where the attending parent was clearly there.
 
-The result was ten to fifteen false "mom is gone" alerts every night. She was there the whole time, sleeping on her eggs, invisible to infrared.
+The fix has three parts. First, explicit IR guidance in the analyzer prompt: when the image is grayscale, default to "uncertain" rather than "absent". Second, suppress absence alerts during quiet hours, when an attending parent leaving the nest at 2 AM is not a real scenario. Third, raise the confidence floor for overnight state changes, so a low-confidence IR misread cannot trigger the cadence to tighten and burn camera battery for nothing.
 
-The fix had three parts. First, I added explicit IR guidance to the prompt: if the image is grayscale, default to "uncertain" rather than "absent," because you cannot reliably tell. Second, I suppressed the absence alerts entirely during quiet hours, because a cardinal leaving her nest at 2 AM to forage is not a real scenario. Third, I raised the confidence threshold for overnight state changes, so a low confidence "empty nest" reading from an IR image would not trigger the system to start snapping every sixty seconds and burning through camera battery for nothing.
-
-That was almost right. The camera switches to infrared at sunset, but the quiet hours window did not start until eleven at night. For three hours in the evening the system was in the blind spot it had been designed to handle, and it fired the same false alert the overnight fix was supposed to prevent. I changed the suppression to key off the model's own description instead of the wall clock. When Sonnet says the image is in IR or infrared or grayscale, the system treats it the same way it treats the middle of the night.
-
-The predator alerts still fire overnight. A raccoon at the nest at 3 AM is a real threat and the system needs to catch it. But the "where is mom" logic learned to admit what it cannot see.
+The wall-clock quiet-hours window starts later than the camera's IR transition at sunset, leaving a gap where IR is on but quiet-hours suppression is not. The system compensates by also keying the suppression off the model's own description: when Sonnet says "IR mode" or "infrared" or "grayscale" in its summary, the system treats the frame the same way it treats the middle of the night. Predator alerts still fire overnight — a raccoon at the nest at 3 AM is real.
 
 ### Catching a four-second attack
 
-A thrasher raid takes about four seconds. Beak in the cup, grab, gone. I watched the original footage several times and realized the sixty-second snap cadence could miss the whole thing. The bird would come and go between frames.
+A brown-thrasher raid takes about four seconds. Beak in the cup, grab, gone. A sixty-second snap cadence can miss the entire event between frames.
 
-I changed two things.
+Two changes compound to close that gap.
 
-First, **burst cadence**. For the first three minutes after the cardinal leaves her nest, the system snaps every thirty seconds instead of every sixty. Three minutes is when the risk is highest, when a thrasher watching from a nearby tree is most likely to make its move. After those three minutes the cadence relaxes back to sixty seconds until she returns.
+**Burst cadence.** For the first three minutes after the attending parent leaves the nest, the system snaps every thirty seconds instead of sixty. After the burst window the cadence relaxes back to one-minute absence cadence.
 
 ```
 Before:   leave ── 60s ── 60s ── 60s ── 60s ── 60s ── 60s ── return
@@ -142,76 +124,37 @@ After:    leave ─30s─30s─30s─30s─30s─30s ── 60s ── 60s ─�
           │──── burst (first 3 min) ────│──── normal absence ────│
 ```
 
-Second, **multi-image analysis**. Each snap now goes to the analyzer as three crops of the same frame: the full view, a tight center crop that makes the nest cup fill the model's attention, and a smaller overview for scene context. The old approach sent one downscaled image, which worked fine when a thrasher was obviously perched on top of the bush but struggled when it mattered, when a beak was half-visible behind a leaf or the distinguishing streaks on its breast were a few pixels wide.
-
-Together these changes compound. The system gets more chances to see an attack happening, and each chance has more detail to work with. The thrasher has to slip past both to succeed.
+**Multi-image analysis.** Each snap is sent as three crops — full, tight center on the cup, and overview. The analyzer gets more chances to see a partial body half-hidden by foliage and more pixels per chance.
 
 ### Tracking the lifecycle
 
-The early version of the system had no concept of time. A snap was a snap. Was she on the nest, or wasn't she. A predator was either there or not. The state machine had two states and they flickered.
+The system tracks six stages: building, egg-laying, incubation, feeding, fledging, empty. Transitions are inferred from observation history, not declared by hand:
 
-That was enough for the first job, which was catching a thrasher at the cup. It was not enough for everything else. The system did not know that a cardinal at the very beginning of nesting season visits her cup once a day for ten seconds and then leaves for fourteen hours, and that this is normal, and that the alarm it kept firing was wrong. It did not know that a cardinal in the middle of incubation almost never leaves the nest, and that any extended absence late in May would mean something has gone wrong.
+- **Building → laying** on the first confident attending-parent-on-nest observation.
+- **Laying → incubation** when a 24-hour rolling window shows ≥70% on-nest confident observations (cardinal profile threshold; tunable per profile).
+- **Incubation → feeding** with a 2-sighting confirmation rule. A single chick sighting is not enough — a noisy frame should not advance the calendar. Two confirming `young_visible="true"` observations within four hours triggers the transition and fires the 🐣 hatch alert. Cost: a few minutes of latency on real hatch announcements; benefit: no false hatch alerts.
+- **Feeding → fledging** after twelve hours with no parent visit and no threat in the previous forty-eight, with chicks previously confirmed.
+- **Fledging → empty** after seventy-two hours of no activity.
 
-So I gave it a calendar.
+Each transition fires a quiet LOW alert on a dedicated lifecycle channel, separate from threat alerts. The daily heartbeat embed includes a day counter — "Incubation, Day 4 of about 12" — that keys off the profile's biological day-range.
 
-The system now tracks six stages in order: building the nest, laying eggs, incubating them, feeding chicks, fledging, then empty. The transitions are inferred from observation, not declared by hand. When twenty four hours of snaps show her sitting roughly seven times out of ten, the system concludes incubation has begun. When a chick's open mouth appears above the rim of the cup on two separate frames within a four hour window, it moves to feeding. When she stops visiting the nest for most of a day, with no predator seen anywhere nearby in the previous two days, it calls it a fledge.
-
-The two-sighting rule for hatching is deliberate. The analyzer occasionally misreads a shadow or a clump of straw as a hatchling, and a single noisy frame should not move the calendar forward. Two confirming frames within four hours is the threshold I settled on. It costs me a few minutes of latency on the actual hatch announcement and it costs me nothing at all in false alarms.
-
-Each transition gets a quiet note in a dedicated Discord channel, separate from the alerts. The egg-laying announcement, the incubation announcement, the hatch announcement, the fledge announcement: short, gentle, one line each. They share a channel because they share a tone. None of them ever require action.
-
-The daily heartbeat now includes a day counter. "Incubation, Day 4 of about 12." It tells me where we are without my having to count it out.
-
-When I started monitoring this brood the cardinal was already past the building stage and partway through laying. A small backfill tool walks the observation history and infers when each transition happened, so the day counter starts from a real date instead of from when I happened to install the camera. For this brood it set incubation as having started on April 14th.
+A backfill tool (`tools/lifecycle_backfill.py`) walks the observation history and infers when each transition happened, so a deployment installed mid-cycle starts the day counter from a real date rather than from the camera-install date.
 
 ### Two model verification
 
-Claude Sonnet 4.6 analyzes every snap. When it flags a CRITICAL or HIGH alert, the system runs a blind second opinion through Opus 4.7. Same image, same prompt, no hint of what Sonnet said. This is not confirmation bias; it is an independent evaluation. Opus can suppress, downgrade, or confirm.
+Sonnet 4.6 analyzes every snap. CRITICAL and HIGH alerts run a blind Opus 4.7 verification: same image, same prompt, no hint of Sonnet's verdict. Opus can suppress, downgrade, or confirm.
 
-The female cardinal and the Brown Thrasher are both brownish birds. The analyzer prompt includes field marks: red crest means cardinal, never a threat; long tail plus streaked breast plus yellow eye means thrasher, always a threat; can't tell means unknown, which still fires an alert, because I would rather get woken up for nothing than miss the real thing.
+The verifier also runs a content-aware override: if Opus's observation identifies the target species (matching `profile.target.match_terms`) and lists no threats, the alert is suppressed regardless of Opus's rule-engine output. This closes a failure mode where Opus correctly identifies the attending parent but flags `direct_nest_interaction=true` (a schema violation for the target species), which would otherwise produce a CRITICAL-rank rule output that confirms a false Sonnet HIGH through pure severity comparison.
 
 ### Five Discord channels
 
 | Channel | Purpose |
 |---|---|
-| **#alerts** | CRITICAL, HIGH, MEDIUM, LOW. Actionable, live alerts only |
-| **#nest-feed** | Every snap with Claude's full analysis. Watch the AI reason in real time |
-| **#nest-analytics** | Behavior reports every 8 hours: foraging trips, threat counts, time on nest |
-| **#nest-backfill** | Alerts from analyzer downtime, tagged `[BACKFILL +Nm]`. Keeps #alerts clean |
-| **#cardinal-lifecycle-changes** | Stage transitions only: laying begins, incubation begins, hatch, fledge. Celebration only, never an alarm |
-
----
-
-## By the numbers
-
-| | |
-|---|---|
-| Snaps per day | ~285 |
-| Monthly cost (Anthropic) | ~$180-270 (multi-image on) |
-| Camera battery life | 10 to 14 days |
-| Lifecycle stages tracked | 6 |
-| Tests in the suite | 298 |
-| Reaction time in the burst window (first 3 min after she leaves) | Under 30 seconds |
-| Reaction time when she's away (after burst) | Under a minute |
-| Reaction time when she's home | Under five minutes |
-| Models that know the cardinal exists | 2 |
-| Cardinals that know the models exist | 0 |
-
----
-
-## A few things about the cardinal
-
-Things that came up while I was researching this project and refused to stop surprising me. All grounded in ornithology, not folklore.
-
-- **Female cardinals sing.** Unusual among the familiar backyard songbirds of temperate North America, where singing is almost always a male job. The female Northern Cardinal sings full songs from the nest while she is incubating, and ornithologists think she is coordinating with the male about when to bring her food. (Female song turns out to be widespread and ancestral across songbirds globally. It is just rare among the ones Americans happen to notice.)
-- **His red color depends on what he eats.** Cardinal red is built from carotenoid pigments absorbed from berries and fruits. Males on poorer diets come out duller, so the intensity of his plumage works as an honest signal of health. The female reads it before choosing a mate. (The occasional bright yellow cardinal you see in viral news stories is almost always a genetic or metabolic mutation, not just a bad diet.)
-- **Young males are brown, with a dark bill.** For his first few months a male cardinal looks much like a female. Dusky tan body, no red. The tell is the bill. Adults have the iconic bright orange bill; juveniles have a dark one. He starts acquiring his adult plumage during his first fall molt. If you see a cardinal that looks mostly female, with a dark bill and a handful of awkward red feathers coming in around September, you are watching a teenager in the middle of a costume change.
-- **They are socially monogamous.** Pairs stay together year round and often across multiple breeding seasons, jointly defending territory and raising broods. Genetic studies have found some infidelity among the broods, so the popular line about cardinals mating for life is a bit of a romanticization. During courtship the male brings the female seeds and places them directly in her beak. It looks uncannily like kissing. It has a name: courtship feeding. He keeps doing it through incubation, so she does not have to leave the eggs to eat.
-- **Males attack their own reflections.** Car side mirrors, windows, shiny bumpers. A territorial male sees a rival that refuses to leave and hurls himself at it for weeks. If you have cardinals in your yard long enough, you will eventually see a very small, very angry bird losing a grudge match with a Toyota.
-- **The crest is a mood ring.** It is mobile. Flat when she is relaxed, raised when she is alarmed or excited. This is genuinely a problem for computer vision. A cardinal sitting low on the nest with her crest flat looks distressingly similar to a Brown Thrasher, which has no crest at all. On April 15 the analyzer in this project fired a false CRITICAL alert on its own protected bird for exactly this reason.
-- **They do not migrate.** Year round residents across the eastern US. The Christmas card image of a cardinal perched in the snow is accurate. They just sit there through January, bright red against gray, unbothered. Over the last century they have been slowly expanding their range north into southern Canada. Warmer winters and backyard bird feeders have apparently made the commute optional.
-- **They are named after Catholic cardinals.** The clergy, not the baseball team. Early European colonists saw the scarlet feathers and the pointed crest and thought of the red robes and miters of senior Catholic officials, and the name stuck. Linnaeus made it official in 1758.
-- **State bird of seven US states.** More than any other species. Illinois, Indiana, Kentucky, North Carolina, Ohio, Virginia, West Virginia.
+| `#alerts` | CRITICAL, HIGH, MEDIUM, LOW. Actionable, live alerts only |
+| `#nest-feed` | Every snap with the analyzer's full text. Watch the AI reason in real time |
+| `#nest-analytics` | Behavior reports every 8 hours: foraging trips, threat counts, time on nest |
+| `#nest-backfill` | Alerts from analyzer downtime, tagged `[BACKFILL +Nm]`. Keeps `#alerts` clean |
+| `#lifecycle-changes` | Stage transitions only: laying begins, incubation begins, hatch, fledge. Celebration only, never an alarm |
 
 ---
 
@@ -222,7 +165,7 @@ Things that came up while I was researching this project and refused to stop sur
 - macOS with Python 3.11+
 - [Blink Outdoor](https://blinkforhome.com/) camera pointed at the nest
 - [Anthropic API key](https://console.anthropic.com/) with Sonnet 4.6 + Opus 4.7 access
-- Discord server with webhook URLs for up to 5 channels (alerts is required, the other four are optional but recommended). One additional webhook for a dedicated test channel if you plan to run the integration suite
+- Discord server with webhook URLs for up to five channels (alerts is required, the other four are optional). One additional webhook for a dedicated test channel if you plan to run the integration suite
 
 ### Install
 
@@ -239,8 +182,9 @@ pip install -e ".[dev]"
 ```bash
 cp .env.example .env
 # Fill in: ANTHROPIC_API_KEY, DISCORD_WEBHOOK_URL, BLINK_USERNAME,
-# BLINK_PASSWORD, BLINK_CAMERA_NAME. Optional: feed, analytics,
-# and backfill webhook URLs.
+# BLINK_PASSWORD, BLINK_CAMERA_NAME, SPECIES_PROFILE_PATH (defaults to
+# the bundled northern_cardinal profile). Optional: feed, analytics,
+# backfill, and lifecycle webhook URLs.
 ```
 
 ### Blink authentication (one time)
@@ -291,7 +235,7 @@ python -m cardinal_nest_monitor --role downloader   # in one terminal
 python -m cardinal_nest_monitor --role analyzer     # in another
 ```
 
-Ctrl+C shuts down cleanly. The downloader will keep writing to the spool, the analyzer will keep draining it; they coordinate through `data/state.sqlite` in WAL mode.
+Ctrl+C shuts down cleanly. The downloader keeps writing to the spool and the analyzer keeps draining it; they coordinate through `data/state.sqlite` in WAL mode.
 
 ---
 
@@ -316,7 +260,9 @@ python -m cardinal_nest_monitor.tools.analytics_once
 python -m cardinal_nest_monitor.tools.lifecycle_backfill --auto --dry-run
 python -m cardinal_nest_monitor.tools.lifecycle_backfill --auto
 
-# Real-image regression suite for analyzer prompt changes (~$0.40 per run)
+# Real-image regression suite for analyzer prompt changes (~$0.40 per run).
+# Resolves the lifecycle directory through the active profile's
+# reference_assets manifest.
 python -m cardinal_nest_monitor.tools.lifecycle_regression
 ```
 
@@ -362,17 +308,18 @@ sqlite3 data/state.sqlite "SELECT ts, severity, rule_id, species, title FROM ale
 
 ## Config that matters
 
-Most of the `.env` is set-and-forget. The handful that change the shape of the system:
+Most of `.env` is set-and-forget. The handful that change the shape of the system:
 
 | Variable | What it does |
 |---|---|
+| `SPECIES_PROFILE_PATH` | Path to the active species profile TOML. Defaults to the bundled `northern_cardinal` profile. Switch to point the runtime at a different open-cup passerine. See [`species/README.md`](src/cardinal_nest_monitor/species/README.md) |
 | `LIFECYCLE_TRACKING_ENABLED` | Default `true`. Set `false` as an escape hatch if a lifecycle false-positive ever fires; no code deploy needed |
 | `VERIFY_ALERTS_WITH_OPUS` | Default `true`. Blind Opus 4.7 second opinion on every CRITICAL/HIGH. ~$0.05 per verified alert. Disable to fall back to single-pass alerting |
 | `DISCORD_LIFECYCLE_WEBHOOK_URL` | Routes 🥚/🪺/🐣/🦅 transition alerts to a dedicated celebration channel. Empty = lifecycle alerts go to the urgent channel |
 | `DISCORD_BACKFILL_WEBHOOK_URL` | Routes alerts on stale snaps (analyzer-recovery backlog) to a separate channel tagged `[BACKFILL +Nm]`. Empty = backfill alerts are suppressed entirely |
 | `DISCORD_TEST_WEBHOOK_URL` | Required for the integration test suite. Every `[TEST]` embed routes here so production channels stay clean |
-| `MULTI_IMAGE_ANALYSIS` | Default `true`. Sends three crops per snap (full + center-zoom + overview) for better recall on subtle thrasher features. Disable to halve Anthropic spend at the cost of recall |
-| `ENABLE_EGG_COUNT_ALERTS` | Default `false` on this camera. Turns on the CRITICAL egg-count-dropped rule. Off because this camera cannot reliably see into the cup from below/behind. Flip to `true` only if you install a top-down camera with a clear view of the eggs |
+| `MULTI_IMAGE_ANALYSIS` | Default `true`. Sends three crops per snap (full + center-zoom + overview) for better recall on subtle threat features. Disable to halve Anthropic spend at the cost of recall |
+| `ENABLE_EGG_COUNT_ALERTS` | Default `false`. Turns on the CRITICAL egg-count-dropped rule. Off because most camera angles cannot reliably see into the cup. Flip to `true` only with a top-down camera that has a clear view of the eggs |
 
 See [`.env.example`](./.env.example) for the full list with documentation.
 
@@ -384,9 +331,9 @@ See [`.env.example`](./.env.example) for the full list with documentation.
 
 ## Tech stack
 
-Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos, on five separate channels. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. Full pytest suite including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
+Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos, on five separate channels. Two macOS LaunchAgents managed by launchd. pydantic for schema validation, including the species profile loader. Full pytest suite including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
 
-The system started cardinal-only and is now species-driven via TOML profiles. The cardinal narrative on this page is the tuned reference deployment; pointing the runtime at a different open-cup nesting passerine is a one-file change. See [`src/cardinal_nest_monitor/species/README.md`](src/cardinal_nest_monitor/species/README.md) for the profile authoring guide.
+The system started cardinal-only and is now species-driven via TOML profiles. Every species-specific decision the runtime makes is derived from the active profile. See [`src/cardinal_nest_monitor/species/README.md`](src/cardinal_nest_monitor/species/README.md) for the profile authoring guide.
 
 ---
 
@@ -394,9 +341,11 @@ The system started cardinal-only and is now species-driven via TOML profiles. Th
 
 ```
 src/cardinal_nest_monitor/
-  analyzer.py          Sonnet 4.6 vision analysis with species ID prompt
-  verifier.py          Opus 4.7 blind second opinion on threats
-  events.py            Rules engine (severity levels, cooldowns, absence tracking)
+  analyzer.py          Sonnet 4.6 vision analysis (system prompt rendered from profile)
+  prefilter.py         Optional Haiku 4.5 prefilter (system prompt rendered from profile)
+  prompts.py           Profile-driven analyzer + prefilter prompt renderer
+  verifier.py          Opus 4.7 blind second opinion on threats; profile-driven match terms
+  events.py            Rules engine (severity levels, cooldowns, lifecycle transitions)
   state.py             SQLite state (observations, alerts, derived nest state)
   notifier.py          Discord webhooks (5 channels, severity colored embeds)
   spool.py             Atomic rename file queue between services
@@ -408,25 +357,23 @@ src/cardinal_nest_monitor/
   schema.py            Pydantic models (NestObservation, Severity, AlertDecision)
   blink_client.py      Blink camera connect, snap, motion
   evidence.py          Per event evidence directory writer
-  prompts.py           Render analyzer + prefilter prompts from species profile
-  species/             TOML species profiles (cardinal + robin) + loader
-                       See species/README.md for the profile authoring guide.
+  predicates.py        Shared observation predicates (IR mode, ambiguous-cup, chick sighting)
+  cadence.py           Shared snap-interval calculator (downloader + analyzer parity)
+  species/             TOML species profiles + loader. See species/README.md
   tools/
-    lifecycle_backfill.py    One shot tool to infer historical lifecycle timestamps
-    lifecycle_regression.py  Real image regression suite for analyzer prompt changes
+    lifecycle_backfill.py    One-shot tool to infer historical lifecycle timestamps
+    lifecycle_regression.py  Real-image regression suite, profile-driven asset paths
     analytics_once.py        Fire a single analytics report on demand
     dryrun.py                Run the full pipeline against a local JPEG
     pause.py                 Pause snaps before walking near the nest
     test_discord.py          Webhook smoke test
 
-launchd/               macOS LaunchAgent plists
-tests/                 Unit + integration test suite
-evidence/reference/<species_slug>/    Curated regression images for species ID validation (cardinal-only at present; populated per profile)
+launchd/                                 macOS LaunchAgent plists
+tests/                                   Unit + integration test suite
+evidence/reference/<species_slug>/       Curated regression images per profile
 ```
 
-##
-
-The cardinal doesn't know about any of this. She just sits on her eggs.
+---
 
 <p align="center">
   <i>Built with <a href="https://claude.ai/code">Claude Code</a></i>
