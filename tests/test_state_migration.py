@@ -58,11 +58,17 @@ def _build_old_shape_db(db_path, columns: list[str]) -> None:
 def test_migration_on_existing_db_adds_pending_ambiguous_frame_ts_column(tmp_path):
     """Replay: a DB without pending_ambiguous_frame_ts (the production DB
     before today's deploy). Opening a StateStore on it must run the ALTER
-    TABLE migration and end with the column present + queryable."""
+    TABLE migration and end with the column present + queryable.
+
+    This fixture uses the PRE-Phase-4 cardinal-coded column names so it
+    also exercises the Phase 4 RENAME COLUMN migrations (last_mother_seen_ts
+    → last_attending_parent_seen_ts, etc).
+    """
     db = tmp_path / "existing_state.sqlite"
 
     # Build a DB with all COLUMNS PRIOR to this round's migration.
-    # Does NOT include pending_ambiguous_frame_ts.
+    # Does NOT include pending_ambiguous_frame_ts. Uses the OLD
+    # cardinal-coded names that the Phase 4 RENAMEs migrate forward.
     old_columns = [
         "last_mother_seen_ts REAL",
         "last_known_egg_count INTEGER",
@@ -129,7 +135,15 @@ def test_migration_idempotent_second_open(tmp_path):
 def test_existing_db_with_real_data_survives_migration(tmp_path):
     """A production-shaped DB with real state row values (in_absence,
     last_mother_seen_ts, lifecycle_stage, etc.) must survive the migration
-    intact — no data loss, no state corruption."""
+    intact — no data loss, no state corruption.
+
+    Builds the PRE-Phase-4 cardinal-coded schema and seeds values via the
+    OLD column names (last_mother_seen_ts, last_chick_count,
+    first_chick_sighting_ts), then asserts the values survive into the
+    NEW renamed fields after StateStore opens. Without this, a self-
+    rename or no-op migration silently drops absence/lifecycle continuity
+    on first deploy.
+    """
     db = tmp_path / "production_state.sqlite"
     old_columns = [
         "last_mother_seen_ts REAL",
@@ -151,7 +165,9 @@ def test_existing_db_with_real_data_survives_migration(tmp_path):
     ]
     _build_old_shape_db(db, old_columns)
 
-    # Seed production-like values.
+    # Seed production-like values via the PRE-Phase-4 cardinal column names.
+    # The Phase 4 RENAME COLUMN migration must move these into the renamed
+    # columns when StateStore opens.
     conn = sqlite3.connect(str(db), isolation_level=None)
     try:
         conn.execute(
@@ -160,13 +176,17 @@ def test_existing_db_with_real_data_survives_migration(tmp_path):
             " in_absence=1, "
             " lifecycle_stage=?, "
             " incubation_started_ts=?, "
-            " egg_laying_started_ts=? "
+            " egg_laying_started_ts=?, "
+            " last_chick_count=?, "
+            " first_chick_sighting_ts=? "
             "WHERE id=1",
             (
                 1776384680.95,  # ~prod last_mother_seen_ts
                 "incubation",
                 1776160100.12,  # 2026-04-14 05:48 EDT prod value
                 1776131300.12,  # 2026-04-13 21:48 EDT prod value
+                3,              # last_chick_count
+                1776220000.00,  # first_chick_sighting_ts
             ),
         )
     finally:
@@ -175,14 +195,30 @@ def test_existing_db_with_real_data_survives_migration(tmp_path):
     store = StateStore(db)
     try:
         state = store.get_state()
-        # All prior data preserved.
+        # All prior data preserved across the Phase 4 RENAME COLUMN
+        # migration — read via the NEW field names.
         assert state.in_absence is True
         assert state.lifecycle_stage == "incubation"
-        assert state.last_mother_seen_ts == pytest.approx(1776384680.95)
+        assert state.last_attending_parent_seen_ts == pytest.approx(1776384680.95)
         assert state.incubation_started_ts == pytest.approx(1776160100.12)
         assert state.egg_laying_started_ts == pytest.approx(1776131300.12)
-        # New column present but NULL on existing row.
+        assert state.last_young_count == 3
+        assert state.first_young_sighting_ts == pytest.approx(1776220000.00)
+        # New (post-Phase-4) column present but NULL on existing row.
         assert state.pending_ambiguous_frame_ts is None
+        # And the OLD column names must be gone — RENAME, not ADD.
+        cur = store._conn.execute("PRAGMA table_info(state)")
+        cols = {r[1] for r in cur.fetchall()}
+        for old in (
+            "last_mother_seen_ts",
+            "last_chick_count",
+            "first_chick_sighting_ts",
+        ):
+            assert old not in cols, (
+                f"old column {old!r} must be RENAMED, not duplicated alongside "
+                "the new name (otherwise downstream queries silently miss "
+                "live data)"
+            )
     finally:
         store.close()
 
@@ -220,7 +256,7 @@ def test_analytics_ro_connection_refuses_writes(tmp_path):
     try:
         with pytest.raises(sqlite3.OperationalError):
             store._ro_conn.execute(
-                "UPDATE state SET last_mother_seen_ts = ? WHERE id = 1",
+                "UPDATE state SET last_attending_parent_seen_ts = ? WHERE id = 1",
                 (12345.0,),
             )
     finally:
@@ -441,7 +477,7 @@ def test_record_alert_wraps_writes_in_transaction(tmp_path):
     try:
         decision = AlertDecision(
             severity=Severity.MEDIUM,
-            rule_id="mother_returned",
+            rule_id="attending_parent_returned",
             species=[],
             title="🟢 Mom is back",
             summary="Mother cardinal returned to the nest.",

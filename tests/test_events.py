@@ -481,9 +481,9 @@ def test_backfill_snap_does_not_fire_mother_returned_with_negative_absence(store
     pre_state = store.get_state()
 
     # Without is_backfill=True, the old code would fire mother_returned with
-    # absence_seconds = stale_ts - last_mother_seen_ts = (t-300) - (t-400) =
-    # +100, OR negative if state.last_mother_seen_ts was newer. With the
-    # belt-and-suspenders ts < last_mother_seen_ts guard, no negative-
+    # absence_seconds = stale_ts - last_attending_parent_seen_ts = (t-300) - (t-400) =
+    # +100, OR negative if state.last_attending_parent_seen_ts was newer. With the
+    # belt-and-suspenders ts < last_attending_parent_seen_ts guard, no negative-
     # absence alert can fire even without is_backfill.
     decision = evaluate(on_nest, pre_state, store, stale_ts, is_backfill=True)
     assert decision is None, (
@@ -572,14 +572,14 @@ def test_negative_absence_guard_in_mother_returned_belt_and_suspenders(store):
     state_after_absence = store.record(t_now, False, None, out, None)
     # Manually flip in_absence so the rule's other preconditions are met.
     store._conn.execute(
-        "UPDATE state SET in_absence=1, last_mother_seen_ts=? WHERE id=1",
+        "UPDATE state SET in_absence=1, last_attending_parent_seen_ts=? WHERE id=1",
         (t_now,),
     )
     pre_state = store.get_state()
     on_nest = _make_obs(attending_parent_on_nest="true", summary="snap.")
-    # ts < state.last_mother_seen_ts → would yield negative absence
+    # ts < state.last_attending_parent_seen_ts → would yield negative absence
     decision = evaluate(on_nest, pre_state, store, t_now - 500, is_backfill=False)
-    assert decision is None or decision.rule_id != "mother_returned"
+    assert decision is None or decision.rule_id != "attending_parent_returned"
 
 
 # ── Track 1: ENABLE_EGG_COUNT_ALERTS flag (2026-04-17) ────────────────
@@ -804,7 +804,7 @@ def test_first_ambig_frame_does_not_fire_alert(store):
 
 def test_second_consecutive_ambig_frame_promotes_to_soft_presence(store):
     """Second consecutive ambig frame within the confirmation window
-    clears in_absence and updates last_mother_seen_ts (soft presence),
+    clears in_absence and updates last_attending_parent_seen_ts (soft presence),
     still fires no alert."""
     t0 = time.time()
     store.record(t0 - 600, False, None, _make_obs(), None)
@@ -830,13 +830,13 @@ def test_second_consecutive_ambig_frame_promotes_to_soft_presence(store):
     state = store.record(t1, False, None, ambig2, None)
     assert state.pending_ambiguous_frame_ts is None, "pending cleared"
     assert state.in_absence is False, "soft presence clears in_absence"
-    assert state.last_mother_seen_ts == pytest.approx(t1, abs=1.0), (
-        "soft presence updates last_mother_seen_ts"
+    assert state.last_attending_parent_seen_ts == pytest.approx(t1, abs=1.0), (
+        "soft presence updates last_attending_parent_seen_ts"
     )
 
     # No alert fires from evaluate() either.
     pre_state2 = NestState(
-        **{**after1.model_dump(), "in_absence": True, "last_mother_seen_ts": t0 - 600},
+        **{**after1.model_dump(), "in_absence": True, "last_attending_parent_seen_ts": t0 - 600},
     )
     decision = evaluate(ambig2, pre_state2, store, t1)
     assert decision is None, "2nd ambig frame must still not fire an alert"
@@ -859,7 +859,7 @@ def test_pending_ambig_expires_after_window(store):
     # Must be treated as new 1st sighting (restart window), not promote.
     assert state.pending_ambiguous_frame_ts == pytest.approx(t1, abs=1.0)
     assert state.in_absence is False or state.in_absence is True  # unchanged
-    # Crucially, last_mother_seen_ts should NOT update (no soft presence).
+    # Crucially, last_attending_parent_seen_ts should NOT update (no soft presence).
 
 
 def test_named_thrasher_still_fires_immediately_on_single_frame(store):
@@ -984,7 +984,7 @@ def test_ambig_frame_in_feeding_stage_does_not_trigger_lifecycle(store, monkeypa
         "UPDATE state SET "
         " lifecycle_stage='feeding', "
         " hatch_detected_ts=?, "
-        " last_mother_seen_ts=?, "
+        " last_attending_parent_seen_ts=?, "
         " last_threat_seen_ts=NULL, "
         " in_absence=1 "
         "WHERE id=1",

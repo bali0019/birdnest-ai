@@ -266,6 +266,20 @@ class LifecycleTiming(BaseModel):
             "than predation."
         ),
     )
+    young_sighting_confidence_floor: float = Field(
+        0.75,
+        ge=0.50,
+        le=0.95,
+        description=(
+            "Minimum analyzer confidence required for a young_visible='true' "
+            "frame to count toward the 2-sighting hatch confirmation. The "
+            "default 0.75 was tuned for the cardinal nest after a false 0.82 "
+            "reddish-blob sighting at day 3-4 of incubation nearly poisoned "
+            "the hatch detection (Codex P3, 2026-04-17). Profiles for camera "
+            "geometries that show young more clearly can lower this; "
+            "occluded camera angles may need to raise it."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_ranges(self) -> "LifecycleTiming":
@@ -293,6 +307,15 @@ class AlertCopy(BaseModel):
     hatch_summary: str
     fledge_title: str
     fledge_summary: str
+    long_absence_title: str = Field(
+        ...,
+        description=(
+            "Title for the MEDIUM alert when the attending parent has been "
+            "away from the nest for an extended period. MUST contain the "
+            "literal placeholder '{bucket_mins}' which events.py renders "
+            "with the bucketed elapsed minutes (5, 10, 15, ...)."
+        ),
+    )
     attending_parent_returned_title: str = Field(
         ...,
         description=(
@@ -307,6 +330,15 @@ class AlertCopy(BaseModel):
             "this is the fallback)."
         ),
     )
+
+    @model_validator(mode="after")
+    def _check_long_absence_placeholder(self) -> "AlertCopy":
+        if "{bucket_mins}" not in self.long_absence_title:
+            raise ValueError(
+                "alert_copy.long_absence_title must contain literal "
+                "'{bucket_mins}' placeholder"
+            )
+        return self
 
 
 # ── Reference assets manifest ───────────────────────────────────────────

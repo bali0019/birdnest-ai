@@ -90,7 +90,7 @@ def test_opus_downgrades_high_to_medium():
 def test_opus_downgrades_high_to_low():
     """Sonnet says HIGH, Opus says LOW → downgrade to LOW."""
     sonnet = _decision(Severity.HIGH)
-    opus = _decision(Severity.LOW, "mother_returned")
+    opus = _decision(Severity.LOW, "attending_parent_returned")
     result = compute_verification_decision(sonnet, opus)
     assert result is opus
 

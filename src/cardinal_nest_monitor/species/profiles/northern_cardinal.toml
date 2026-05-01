@@ -124,6 +124,11 @@ sitting_ratio_window_hours = 24
 young_confirmation_window_hours = 4
 fledge_absence_hours = 12
 fledge_threat_free_hours = 48
+# Min analyzer confidence for a young_visible='true' frame to count toward
+# the 2-sighting hatch confirmation. 0.75 prevents reddish-blob misreads at
+# day 3-4 of incubation from registering a stale first-sighting that would
+# bypass the 2-sighting guard on the real later hatch (Codex P3, 2026-04-17).
+young_sighting_confidence_floor = 0.75
 
 # ── User-facing alert copy ─────────────────────────────────────────────
 # These strings appear in Discord. Capture the EXACT current cardinal
@@ -147,6 +152,8 @@ hatch_summary = "Chick presence confirmed by two independent observations. Feedi
 
 fledge_title = "🦅 Chicks fledged!"
 fledge_summary = "No cardinal visits for 12+ hours after chick presence confirmed. Chicks have left the nest."
+
+long_absence_title = "Mother away from nest for {bucket_mins}+ minutes"
 
 attending_parent_returned_title = "Mother returned to nest"
 attending_parent_returned_summary = "Female cardinal visible on or near the nest after an extended absence."

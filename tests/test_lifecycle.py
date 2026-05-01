@@ -76,7 +76,7 @@ def test_lifecycle_flag_off_state_stays_at_incubation(store, monkeypatch):
     state = store.record(t0, False, None, obs, None)
     assert state.lifecycle_stage == "incubation"
     assert state.hatch_detected_ts is None
-    assert state.last_chick_count is None  # not tracked when flag is off
+    assert state.last_young_count is None  # not tracked when flag is off
 
 
 def test_lifecycle_flag_off_no_lifecycle_alert(store, monkeypatch):
@@ -115,7 +115,7 @@ def test_first_chick_sighting_does_not_transition(store, lifecycle_on):
     state = store.record(t1, False, None, obs, None)
     # STILL in incubation — waiting for confirmation
     assert state.lifecycle_stage == "incubation"
-    assert state.first_chick_sighting_ts == pytest.approx(t1, abs=1.0)
+    assert state.first_young_sighting_ts == pytest.approx(t1, abs=1.0)
     assert state.hatch_detected_ts is None
 
 
@@ -142,8 +142,8 @@ def test_second_sighting_confirms_transition(store, lifecycle_on):
     ), None)
     assert state.lifecycle_stage == "feeding"
     assert state.hatch_detected_ts == pytest.approx(t2, abs=1.0)
-    assert state.first_chick_sighting_ts is None  # cleared on transition
-    assert state.last_chick_count == 3
+    assert state.first_young_sighting_ts is None  # cleared on transition
+    assert state.last_young_count == 3
 
 
 def test_second_sighting_outside_window_resets(store, lifecycle_on):
@@ -168,7 +168,7 @@ def test_second_sighting_outside_window_resets(store, lifecycle_on):
 
     # Still incubation — this is treated as a fresh "1st sighting"
     assert state.lifecycle_stage == "incubation"
-    assert state.first_chick_sighting_ts == pytest.approx(t2, abs=1.0)
+    assert state.first_young_sighting_ts == pytest.approx(t2, abs=1.0)
     assert state.hatch_detected_ts is None
 
 
@@ -218,7 +218,7 @@ def test_young_visible_below_confidence_floor_does_not_advance(store, lifecycle_
         young_visible="true",
         confidence=0.65,  # below 0.75 floor
     ), None)
-    assert state.first_chick_sighting_ts is None, (
+    assert state.first_young_sighting_ts is None, (
         "Below-floor confidence must not record as 1st chick sighting"
     )
     assert state.lifecycle_stage == "incubation"
@@ -264,7 +264,7 @@ def test_feeding_to_fledging_after_12h_no_visits(store, lifecycle_on):
         young_count_estimate=2,
     ), None)
     assert state.lifecycle_stage == "feeding"
-    # last_mother_seen_ts = t0
+    # last_attending_parent_seen_ts = t0
 
     # 13 hours later: no cardinal, no threat
     t1 = t0 + 13 * 3600
@@ -528,7 +528,7 @@ def test_feeding_suppression_off_outside_feeding_stage(store, lifecycle_on):
 # ── Chick count tracking ──────────────────────────────────────────────
 
 def test_chick_count_updates_when_visible(store, lifecycle_on):
-    """last_chick_count is updated from young_count_estimate when chicks
+    """last_young_count is updated from young_count_estimate when chicks
     are confidently visible."""
     t0 = time.time()
     obs = _obs(
@@ -537,11 +537,11 @@ def test_chick_count_updates_when_visible(store, lifecycle_on):
         young_count_estimate=3,
     )
     state = store.record(t0, False, None, obs, None)
-    assert state.last_chick_count == 3
+    assert state.last_young_count == 3
 
 
 def test_chick_count_not_updated_when_uncertain(store, lifecycle_on):
-    """If young_visible is uncertain, don't update last_chick_count."""
+    """If young_visible is uncertain, don't update last_young_count."""
     t0 = time.time()
     obs_seen = _obs(
         attending_parent_on_nest="false",
@@ -549,7 +549,7 @@ def test_chick_count_not_updated_when_uncertain(store, lifecycle_on):
         young_count_estimate=2,
     )
     state = store.record(t0, False, None, obs_seen, None)
-    assert state.last_chick_count == 2
+    assert state.last_young_count == 2
 
     # Another confirming sighting to get into feeding stage
     t05 = t0 + 300
@@ -560,14 +560,14 @@ def test_chick_count_not_updated_when_uncertain(store, lifecycle_on):
     ), None)
     assert state.lifecycle_stage == "feeding"
 
-    # Later: uncertain observation — should NOT change last_chick_count
+    # Later: uncertain observation — should NOT change last_young_count
     t1 = t05 + 600
     obs_obscured = _obs(
         attending_parent_on_nest="true",  # mom covering
         young_visible="uncertain",
     )
     state = store.record(t1, False, None, obs_obscured, None)
-    assert state.last_chick_count == 2  # unchanged
+    assert state.last_young_count == 2  # unchanged
 
 
 # ── Predation in feeding stage is still CRITICAL ──────────────────────
@@ -843,13 +843,13 @@ def test_lifecycle_event_skips_frames_without_nest_visible(store, lifecycle_on):
     Yard-motion frames or obscured-scene frames don't carry enough signal
     to advance lifecycle state. Without this guard, a high-confidence
     'no nest in frame' observation in the feeding stage with a stale
-    last_mother_seen_ts could emit a false fledge alert.
+    last_attending_parent_seen_ts could emit a false fledge alert.
     """
     _seed_stage(
         store,
         "feeding",
         hatch_detected_ts=time.time() - 48 * 3600,
-        last_mother_seen_ts=time.time() - 13 * 3600,
+        last_attending_parent_seen_ts=time.time() - 13 * 3600,
     )
     t0 = time.time()
     # No nest in this frame at all — e.g. camera pointed elsewhere briefly.
@@ -960,7 +960,7 @@ def test_stale_snap_does_not_regress_lifecycle_stage(store, lifecycle_on):
         store,
         "feeding",
         hatch_detected_ts=t0 - 2 * 24 * 3600,
-        last_mother_seen_ts=t0 - 600,
+        last_attending_parent_seen_ts=t0 - 600,
     )
     # Seed a non-stale observation so latest_ts is known.
     store.record(t0, False, None, _obs(attending_parent_on_nest="true"), None)

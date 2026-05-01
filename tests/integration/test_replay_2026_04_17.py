@@ -116,8 +116,8 @@ def _simulate_verifier(
 def _replay(entries, tmp_path, monkeypatch) -> dict[str, object]:
     """Execute chronological stateful replay. Returns a dict:
       - "fired": {evidence_dir_name: AlertDecision | None}
-      - "last_mother_seen_ts_before_first_ambig": float | None
-      - "last_mother_seen_ts_final": float | None
+      - "last_attending_parent_seen_ts_before_first_ambig": float | None
+      - "last_attending_parent_seen_ts_final": float | None
     The trace fields let the ambig-cluster assertion test consume the
     same module-scoped replay instead of running the day over again.
     """
@@ -137,7 +137,7 @@ def _replay(entries, tmp_path, monkeypatch) -> dict[str, object]:
     try:
         for ts, name, obs, opus_obs, meta in entries:
             if is_ambiguous_occupied_cup(obs) and not seen_ambig:
-                last_seen_before_ambig = store.get_state().last_mother_seen_ts
+                last_seen_before_ambig = store.get_state().last_attending_parent_seen_ts
                 seen_ambig = True
 
             pre_state = store.get_state()
@@ -161,8 +161,8 @@ def _replay(entries, tmp_path, monkeypatch) -> dict[str, object]:
             fired[name] = final_decision
         return {
             "fired": fired,
-            "last_mother_seen_ts_before_first_ambig": last_seen_before_ambig,
-            "last_mother_seen_ts_final": store.get_state().last_mother_seen_ts,
+            "last_attending_parent_seen_ts_before_first_ambig": last_seen_before_ambig,
+            "last_attending_parent_seen_ts_final": store.get_state().last_attending_parent_seen_ts,
             "saw_ambig": seen_ambig,
         }
     finally:
@@ -295,7 +295,7 @@ def test_mother_returned_still_fires_on_clear_return(fired):
     real returns."""
     returns = [
         (name, d) for name, d in fired.items()
-        if d is not None and d.rule_id == "mother_returned"
+        if d is not None and d.rule_id == "attending_parent_returned"
     ]
     assert len(returns) >= 1, (
         "At least one mother_returned LOW should still fire today. "
@@ -311,7 +311,7 @@ def test_genuine_empty_nest_absence_still_fires_medium(fired):
     e.g. the 07:59:40 MEDIUM — first morning absence, genuinely empty cup
     summary ("Nest cup is clearly visible and structurally intact...no
     animals or threats are visible"). Under the new code this should
-    still fire (real empty nest + 5+ min since last_mother_seen_ts)."""
+    still fire (real empty nest + 5+ min since last_attending_parent_seen_ts)."""
     mediums = [
         (name, d) for name, d in fired.items()
         if d is not None and d.rule_id == "long_absence"
@@ -357,17 +357,17 @@ def test_no_false_highs_anywhere_in_day(fired):
 def test_ambig_frames_leave_pending_or_soft_presence_trace(replay_result):
     """The ambig-cup path isn't only about suppression — on 2 consecutive
     ambig frames, state.py promotes to soft presence (clears in_absence,
-    updates last_mother_seen_ts). Verify that at least one ambig frame
-    appeared in the day and that last_mother_seen_ts did not regress
+    updates last_attending_parent_seen_ts). Verify that at least one ambig frame
+    appeared in the day and that last_attending_parent_seen_ts did not regress
     across it (either from ambig-pair promotions or from real
     attending_parent_on_nest=true observations downstream).
 
     Consumes the shared module-scoped replay — no second full-day walk.
     """
-    before = replay_result["last_mother_seen_ts_before_first_ambig"]
-    after = replay_result["last_mother_seen_ts_final"]
+    before = replay_result["last_attending_parent_seen_ts_before_first_ambig"]
+    after = replay_result["last_attending_parent_seen_ts_final"]
     assert replay_result["saw_ambig"], "Expected at least one ambig frame in the day"
     if before is not None:
         assert after is None or after >= before, (
-            "last_mother_seen_ts must not regress across the day"
+            "last_attending_parent_seen_ts must not regress across the day"
         )

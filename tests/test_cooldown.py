@@ -241,7 +241,7 @@ def test_lifecycle_low_does_not_silence_mother_returned(store):
     (hatch / fledge / egg_laying_begin / incubation_begin) was silencing
     a real mother_returned alert because rule 5's cooldown was keyed to
     severity LOW with no rule-id constraint. Switching to
-    rule_cooldown_active("mother_returned", ...) must allow mother_returned
+    rule_cooldown_active("attending_parent_returned", ...) must allow mother_returned
     to fire even if a LOW hatch alert was just recorded.
     """
     from cardinal_nest_monitor.events import evaluate
@@ -298,7 +298,7 @@ def test_lifecycle_low_does_not_silence_mother_returned(store):
         "mother_returned must fire even when an unrelated LOW lifecycle "
         "alert (hatch) was recorded recently — Codex P2 round 5."
     )
-    assert decision.rule_id == "mother_returned"
+    assert decision.rule_id == "attending_parent_returned"
 
 
 def test_mother_returned_self_cooldown_still_works(store):
@@ -336,7 +336,7 @@ def test_mother_returned_self_cooldown_still_works(store):
         summary="prior return",
         species=[],
         confidence=0.9,
-        rule_id="mother_returned",
+        rule_id="attending_parent_returned",
     )
     store.record_alert(prior, ts=now - 10, evidence_dir=None)
 

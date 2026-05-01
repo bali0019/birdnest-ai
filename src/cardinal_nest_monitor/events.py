@@ -6,7 +6,7 @@ five rules in priority order. Cooldown checks use the alerts table via
 StateStore; severity escalation always breaks through (a CRITICAL after a
 HIGH within the same cooldown window still fires).
 
-NOTE: Rule 5 (mother_returned) is implemented best-effort. The caller
+NOTE: Rule 5 (attending_parent_returned) is implemented best-effort. The caller
 pattern record() → evaluate() means state.in_absence may have already been
 cleared by the time we look at it; the rule fires correctly only when
 evaluate() is called with the *pre-record* state. The wiring in main.py
@@ -33,6 +33,7 @@ from cardinal_nest_monitor.schema import (
     NestState,
     Severity,
 )
+from cardinal_nest_monitor.species import get_species_profile
 from cardinal_nest_monitor.state import StateStore, _row_passes_confidence
 
 log = logging.getLogger(__name__)
@@ -120,9 +121,17 @@ def _lifecycle_event(
     if not observation.nest_visible:
         return None
 
+    profile = get_species_profile()
+    lc = profile.lifecycle
+    copy = profile.alert_copy
+    sitting_window_s = lc.sitting_ratio_window_hours * 3600
+    young_confirm_window_s = lc.young_confirmation_window_hours * 3600
+    fledge_absence_s = lc.fledge_absence_hours * 3600
+    fledge_threat_free_s = lc.fledge_threat_free_hours * 3600
+
     # Egg-laying begins: predict building_nest → egg_laying transition.
-    # Fires once when the female is first observed sitting on the nest.
-    # Deliberately gentle — a LOW celebration alert, not an alarm.
+    # Fires once when the attending parent is first observed sitting on the
+    # nest. Deliberately gentle — a LOW celebration alert, not an alarm.
     if (
         state.lifecycle_stage == "building_nest"
         and observation.attending_parent_on_nest == "true"
@@ -139,26 +148,26 @@ def _lifecycle_event(
         if not store.rule_cooldown_active("egg_laying_begin", 24 * 3600, ts=ts):
             return AlertDecision(
                 severity=sev,
-                title="🥚 Egg laying has begun",
-                summary="Female cardinal first observed sitting on the nest. Laying typically takes 3-4 days (one egg/day) before full incubation starts.",
+                title=copy.egg_laying_begin_title,
+                summary=copy.egg_laying_begin_summary,
                 species=[],
-                mother_present=observation.attending_parent_present,
+                attending_parent_present=observation.attending_parent_present,
                 confidence=observation.confidence,
                 rule_id="egg_laying_begin",
             )
 
     # Incubation begins: predict egg_laying → incubation transition.
-    # Fires once when sustained sitting pattern is confirmed (≥70%
-    # on-nest ratio over a 24h window). Mirrors state.py::record() logic.
+    # Fires once when sustained sitting pattern is confirmed (sitting ratio
+    # over the configured window). Mirrors state.py::record() logic.
     if (
         state.lifecycle_stage == "egg_laying"
         and state.egg_laying_started_ts is not None
-        and (ts - state.egg_laying_started_ts) >= 24 * 3600
+        and (ts - state.egg_laying_started_ts) >= sitting_window_s
     ):
         cur = store._conn.execute(
             "SELECT observation_json FROM observations "
             "WHERE ts >= ? AND ts <= ? AND observation_json IS NOT NULL",
-            (ts - 24 * 3600, ts),
+            (ts - sitting_window_s, ts),
         )
         confident_total = 0
         confident_on_nest = 0
@@ -172,72 +181,70 @@ def _lifecycle_event(
                 confident_total += 1
             elif '"attending_parent_on_nest":"false"' in oj:
                 confident_total += 1
-        if confident_total >= 24:
+        if confident_total >= lc.sitting_ratio_window_hours:
             ratio = confident_on_nest / confident_total
-            if ratio >= 0.70:
+            if ratio >= lc.sitting_ratio_threshold:
                 sev = Severity.LOW
                 if not store.rule_cooldown_active("incubation_begin", 24 * 3600, ts=ts):
                     return AlertDecision(
                         severity=sev,
-                        title="🪺 Incubation has begun",
-                        summary=(
-                            f"Sustained sitting confirmed ({ratio:.0%} on-nest "
-                            f"over 24h). Full incubation is underway — ~12 day "
-                            f"countdown to hatch begins now."
+                        title=copy.incubation_begin_title,
+                        summary=copy.incubation_begin_summary.format(
+                            ratio_pct=f"{ratio:.0%}"
                         ),
                         species=[],
-                        mother_present=observation.attending_parent_present,
+                        attending_parent_present=observation.attending_parent_present,
                         confidence=observation.confidence,
                         rule_id="incubation_begin",
                     )
 
     # Hatch: predict incubation → feeding with 2-sighting confirmation.
     # Mirror the state.py::record() logic exactly:
-    #   - Alert fires ONLY on the 2nd confirming chick signal within the
-    #     4-hour window.
-    #   - 1st sighting sets first_chick_sighting_ts in state but fires
+    #   - Alert fires ONLY on the 2nd confirming young signal within the
+    #     confirmation window.
+    #   - 1st sighting sets first_young_sighting_ts in state but fires
     #     nothing — we stay quiet until confirmation arrives.
-    _CONFIRM_WINDOW_S = 4 * 3600
     if state.lifecycle_stage == "incubation" and is_confirmed_chick_sighting(observation):
         is_confirmation = (
-            state.first_chick_sighting_ts is not None
-            and (ts - state.first_chick_sighting_ts) <= _CONFIRM_WINDOW_S
+            state.first_young_sighting_ts is not None
+            and (ts - state.first_young_sighting_ts) <= young_confirm_window_s
         )
         if is_confirmation:
             sev = Severity.LOW
             if not store.rule_cooldown_active("hatch", 24 * 3600, ts=ts):
                 return AlertDecision(
                     severity=sev,
-                    title="🐣 Chicks hatched!",
-                    summary="Chick presence confirmed by two independent observations. Feeding stage begins.",
+                    title=copy.hatch_title,
+                    summary=copy.hatch_summary,
                     species=[],
-                    mother_present=observation.attending_parent_present,
+                    attending_parent_present=observation.attending_parent_present,
                     confidence=observation.confidence,
                     rule_id="hatch",
                 )
 
     # Fledge: predict feeding → fledging
-    # Trigger: no cardinal visits in 12+ hours AND no threat in 48h AND
-    # chicks previously confirmed (hatch_detected_ts set).
+    # Trigger: no attending-parent visits in fledge_absence_hours AND no
+    # threat in fledge_threat_free_hours AND young previously confirmed
+    # (hatch_detected_ts set).
     if (
         state.lifecycle_stage == "feeding"
-        and state.last_mother_seen_ts is not None
-        and (ts - state.last_mother_seen_ts) >= 12 * 3600
+        and state.last_attending_parent_seen_ts is not None
+        and (ts - state.last_attending_parent_seen_ts) >= fledge_absence_s
         and (
             state.last_threat_seen_ts is None
-            or (ts - state.last_threat_seen_ts) >= 48 * 3600
+            or (ts - state.last_threat_seen_ts) >= fledge_threat_free_s
         )
         and state.hatch_detected_ts is not None
-        and observation.attending_parent_on_nest != "true"  # confirm cardinal is absent NOW
+        and observation.attending_parent_on_nest != "true"  # confirm absent NOW
     ):
         sev = Severity.LOW
         if not store.rule_cooldown_active("fledge", 24 * 3600, ts=ts):
             return AlertDecision(
                 severity=sev,
-                title="🦅 Chicks fledged!",
-                summary="No cardinal visits for 12+ hours after chick presence confirmed. Chicks have left the nest.",
+                title=copy.fledge_title,
+                summary=copy.fledge_summary,
                 species=[],
-                mother_present=observation.attending_parent_present,
+                attending_parent_present=observation.attending_parent_present,
                 confidence=observation.confidence,
                 rule_id="fledge",
             )
@@ -273,8 +280,8 @@ def evaluate(
     observation we've already recorded — i.e. a backfill frame from
     analyzer-recovery. The state row reflects FUTURE truth relative to
     this snap. State-relative rules (egg_loss, long_absence,
-    mother_returned, lifecycle transitions) would compare snap-time
-    facts against future state and produce nonsense (e.g. mother_returned
+    attending_parent_returned, lifecycle transitions) would compare snap-time
+    facts against future state and produce nonsense (e.g. attending_parent_returned
     with absence_seconds=-300). For backfill snaps we only fire OBSERVATION-
     ONLY rules: direct_attack and predator_near_nest. Those remain
     operationally valuable — "during downtime a thrasher was at the nest"
@@ -338,7 +345,7 @@ def evaluate(
                 title="Direct nest interaction",
                 summary=observation.summary,
                 species=threats,
-                mother_present=observation.attending_parent_present,
+                attending_parent_present=observation.attending_parent_present,
                 absence_seconds=state.absence_seconds(ts),
                 confidence=observation.confidence,
                 rule_id="direct_attack",
@@ -373,7 +380,7 @@ def evaluate(
                 title="Egg count dropped",
                 summary=observation.summary,
                 species=threats,
-                mother_present=observation.attending_parent_present,
+                attending_parent_present=observation.attending_parent_present,
                 egg_count_before=state.last_known_egg_count,
                 egg_count_after=observation.egg_count_estimate,
                 confidence=observation.confidence,
@@ -390,17 +397,17 @@ def evaluate(
 
     # Cap absence at time since quiet hours ended. During quiet hours, IR
     # images can't reliably detect the cardinal (she blends with the nest
-    # in grayscale), so last_mother_seen_ts doesn't update — causing the
+    # in grayscale), so last_attending_parent_seen_ts doesn't update — causing the
     # absence counter to accumulate the entire overnight period. When
     # morning comes, the first MEDIUM would show "515+ minutes" when she's
-    # only been absent since dawn. Fix: if last_mother_seen_ts is before
+    # only been absent since dawn. Fix: if last_attending_parent_seen_ts is before
     # the most recent quiet-hours-end, treat the absence as starting at
     # that boundary (she was almost certainly on the nest overnight).
     settings_obj = get_settings()
     if (
         absence is not None
         and settings_obj.quiet_hours.strip()
-        and state.last_mother_seen_ts is not None
+        and state.last_attending_parent_seen_ts is not None
         and not settings_obj.in_quiet_hours(datetime.fromtimestamp(ts).time())
     ):
         import re as _re
@@ -416,7 +423,7 @@ def evaluate(
             _qend_ts = _qend_dt.timestamp()
             if _qend_ts > ts:
                 _qend_ts -= 86400
-            if state.last_mother_seen_ts < _qend_ts:
+            if state.last_attending_parent_seen_ts < _qend_ts:
                 absence = ts - _qend_ts
 
     if threats and observation.near_nest_activity:
@@ -427,7 +434,7 @@ def evaluate(
                 title="Predator near nest",
                 summary=observation.summary,
                 species=threats,
-                mother_present=observation.attending_parent_present,
+                attending_parent_present=observation.attending_parent_present,
                 absence_seconds=absence,
                 confidence=observation.confidence,
                 rule_id="predator_absent",  # keep rule_id for cooldown/analytics continuity
@@ -472,48 +479,52 @@ def evaluate(
             ) * (_LONG_ABSENCE_THRESHOLD // 60)
             return AlertDecision(
                 severity=sev,
-                title=f"Mother away from nest for {bucket_mins}+ minutes",
+                title=get_species_profile().alert_copy.long_absence_title.format(
+                    bucket_mins=bucket_mins
+                ),
                 summary=observation.summary,
                 species=[],
-                mother_present=observation.attending_parent_present,
+                attending_parent_present=observation.attending_parent_present,
                 absence_seconds=absence,
                 confidence=observation.confidence,
                 rule_id="long_absence",
             )
         return None
 
-    # ── Rule 5: Mother returned (LOW, once per absence ≥ 5 min) ──────
+    # ── Rule 5: Attending parent returned (LOW, once per absence ≥ 5 min) ──────
     # Skip on backfill: state.in_absence reflects FUTURE truth for stale
-    # snaps, so this rule would fire mother_returned with a negative
-    # absence_seconds (the snap is older than the last mother sighting
+    # snaps, so this rule would fire attending_parent_returned with a negative
+    # absence_seconds (the snap is older than the last attending-parent sighting
     # that established the current in_absence flag). Codex P2 reproduced
     # this with absence_seconds=-300.
     if (
         not is_backfill
         and observation.attending_parent_on_nest == "true"
         and state.in_absence
-        and state.last_mother_seen_ts is not None
+        and state.last_attending_parent_seen_ts is not None
         # Belt-and-suspenders: even outside backfill mode, never fire if
         # this snap is older than the recorded last sighting (would yield
         # a negative absence_seconds — non-sensical alert).
-        and ts >= state.last_mother_seen_ts
+        and ts >= state.last_attending_parent_seen_ts
     ):
         # Rule-scoped cooldown (Codex P2 round 5): was previously keyed to
         # any LOW alert, which let unrelated lifecycle LOWs (hatch, fledge,
         # egg_laying_begin, incubation_begin) silently suppress a real
-        # mother_returned alert for 5 minutes. Codex repro: a LOW hatch
-        # alert 10s before a valid return-to-nest frame returned None.
-        if not store.rule_cooldown_active("mother_returned", _MOTHER_RETURN_COOLDOWN, ts=ts):
+        # attending_parent_returned alert for 5 minutes. Codex repro: a LOW
+        # hatch alert 10s before a valid return-to-nest frame returned None.
+        if not store.rule_cooldown_active(
+            "attending_parent_returned", _MOTHER_RETURN_COOLDOWN, ts=ts
+        ):
             sev = Severity.LOW
             return AlertDecision(
                 severity=sev,
-                title="Mother returned to nest",
+                title=get_species_profile().alert_copy.attending_parent_returned_title,
                 summary=observation.summary,
                 species=[],
-                mother_present=observation.attending_parent_present,
+                attending_parent_present=observation.attending_parent_present,
                 absence_seconds=state.absence_seconds(ts),
                 confidence=observation.confidence,
-                rule_id="mother_returned",
+                rule_id="attending_parent_returned",
             )
         return None
 

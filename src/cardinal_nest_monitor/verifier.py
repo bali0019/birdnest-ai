@@ -159,7 +159,7 @@ async def verify_alert(
     is_backfill (Codex P2 round 4): forwarded to the internal evaluate()
     call so Opus's verdict uses the SAME backfill mode as Sonnet's. Without
     this, an older HIGH/CRITICAL backfill snap could be downgraded or
-    suppressed by a bogus Opus state-relative result (mother_returned /
+    suppressed by a bogus Opus state-relative result (attending_parent_returned /
     long_absence) computed against future state — a real correctness
     gap specifically when verify_alerts_with_opus=True.
     """

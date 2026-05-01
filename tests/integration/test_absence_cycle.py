@@ -242,4 +242,4 @@ async def test_mother_returns_low_alert(
     )
     decision = return_alerts[0]
     assert decision.severity == Severity.LOW
-    assert decision.rule_id == "mother_returned"
+    assert decision.rule_id == "attending_parent_returned"

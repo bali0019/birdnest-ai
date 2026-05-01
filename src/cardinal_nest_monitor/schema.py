@@ -399,7 +399,7 @@ class AlertDecision(BaseModel):
     title: str
     summary: str
     species: list[str] = Field(default_factory=list)
-    mother_present: Tristate | None = None
+    attending_parent_present: Tristate | None = None
     absence_seconds: int | None = None
     egg_count_before: int | None = None
     egg_count_after: int | None = None
@@ -411,13 +411,13 @@ class AlertDecision(BaseModel):
 class NestState(BaseModel):
     """In-memory view of the SQLite single-row state, returned by state.record()."""
 
-    last_mother_seen_ts: float | None = None  # unix epoch seconds
+    last_attending_parent_seen_ts: float | None = None  # unix epoch seconds
     last_known_egg_count: int | None = None
     last_threat_seen_ts: float | None = None
     last_threat_species: str | None = None
     last_alert_severity: Severity | None = None
     last_absence_alert_ts: float | None = None
-    in_absence: bool = False  # True if mother currently considered absent
+    in_absence: bool = False  # True if attending parent currently considered absent
     # Wall-clock ts when `in_absence` flipped False → True. Consumed by the
     # downloader's burst-cadence path: first N seconds after absence onset
     # are peak predation risk and use burst_snap_interval_seconds. None when
@@ -440,7 +440,7 @@ class NestState(BaseModel):
         "fledging",
         "empty",
     ] = "incubation"
-    last_chick_count: int | None = None
+    last_young_count: int | None = None
     # When the bird transitioned INTO egg_laying (first sitting observed).
     # Cardinals lay 1 egg per day for 3-4 days before starting full incubation.
     egg_laying_started_ts: float | None = None
@@ -450,10 +450,10 @@ class NestState(BaseModel):
     hatch_detected_ts: float | None = None  # set when 2nd confirming chick signal arrives
     fledge_detected_ts: float | None = None  # set on fledge transition
     last_feeding_event_ts: float | None = None  # set on attending_parent_feeding_young=true
-    # Timestamp of the first (unconfirmed) chick sighting. A second confirming
-    # chick signal within 4 hours triggers the hatch transition. After 4 hours
+    # Timestamp of the first (unconfirmed) young sighting. A second confirming
+    # young signal within 4 hours triggers the hatch transition. After 4 hours
     # without confirmation, this resets (stale sighting — possibly a misread).
-    first_chick_sighting_ts: float | None = None
+    first_young_sighting_ts: float | None = None
 
     # Ambiguous-occupied-cup pending candidate (2026-04-17). Set on the first
     # frame where a bird is visibly at the nest but the analyzer cannot
@@ -465,6 +465,6 @@ class NestState(BaseModel):
     pending_ambiguous_frame_ts: float | None = None
 
     def absence_seconds(self, now_ts: float) -> int | None:
-        if self.last_mother_seen_ts is None:
+        if self.last_attending_parent_seen_ts is None:
             return None
-        return int(now_ts - self.last_mother_seen_ts)
+        return int(now_ts - self.last_attending_parent_seen_ts)

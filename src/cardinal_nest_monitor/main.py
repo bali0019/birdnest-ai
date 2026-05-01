@@ -165,12 +165,12 @@ class Pipeline:
         except Exception:
             log.exception("analyzer failed; no observation for this snap")
 
-        # Decide alert (using PRE-record state so mother_returned can fire).
+        # Decide alert (using PRE-record state so attending_parent_returned can fire).
         # Stale-snap correctness (Codex P2): if this snap is older than the
         # most recent observation we've already recorded, it's a backfill
         # frame from analyzer-recovery. The state row reflects FUTURE truth
         # relative to this snap's ts — running state-relative rules against
-        # it produces nonsense (e.g. mother_returned with absence_seconds=
+        # it produces nonsense (e.g. attending_parent_returned with absence_seconds=
         # -300). Pass is_backfill=True so evaluate() skips the time-relative
         # rules but still fires stateless threat alerts (direct_attack,
         # predator_near_nest), which remain useful for "what happened
@@ -493,9 +493,9 @@ async def heartbeat_scheduler(notifier: Notifier, store: StateStore, counters: D
         try:
             state = store.get_state()
             mother_minutes_ago: int | None = None
-            if state.last_mother_seen_ts is not None:
+            if state.last_attending_parent_seen_ts is not None:
                 mother_minutes_ago = int(
-                    (time.time() - state.last_mother_seen_ts) / 60
+                    (time.time() - state.last_attending_parent_seen_ts) / 60
                 )
             lifecycle_stage = state.lifecycle_stage if get_settings().lifecycle_tracking_enabled else None
             lifecycle_day_label = _lifecycle_day_label(state) if lifecycle_stage else None

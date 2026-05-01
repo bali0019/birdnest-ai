@@ -14,14 +14,12 @@ from __future__ import annotations
 from cardinal_nest_monitor.schema import NestObservation, UNKNOWN_THREAT
 
 
-# ── Constants ───────────────────────────────────────────────────────
-
-# Chick-sighting confidence floor (2026-04-17). A false chick sighting
-# at day 3-4 of incubation (a confident 0.82 reddish-blob call) led to
-# a stale first_chick_sighting_ts that would have bypassed the 2-sighting
-# guard on a real later hatch. A higher floor makes the 2-sighting guard
-# more meaningful.
-CHICK_SIGHTING_CONFIDENCE_FLOOR = 0.75
+# Phase 4 (2026-05-01): the young-sighting confidence floor lives in
+# profile.lifecycle.young_sighting_confidence_floor. Read it at use-time
+# via get_species_profile() so tests that swap profiles get the right
+# value. The historical 0.75 default (from 2026-04-17 — see
+# species/_schema.py for the rationale) is enforced by the profile schema
+# default for any profile that omits the field.
 
 
 def named_threats() -> frozenset[str]:
@@ -106,10 +104,10 @@ def is_confirmed_chick_sighting(obs: NestObservation) -> bool:
     comment in state.py used to say "must stay in sync with events.py,"
     which was a request for a shared predicate. This is it.
     """
-    return (
-        obs.young_visible == "true"
-        and obs.confidence >= CHICK_SIGHTING_CONFIDENCE_FLOOR
-    )
+    from cardinal_nest_monitor.species import get_species_profile
+
+    floor = get_species_profile().lifecycle.young_sighting_confidence_floor
+    return obs.young_visible == "true" and obs.confidence >= floor
 
 
 def is_ambiguous_occupied_cup(obs: NestObservation) -> bool:

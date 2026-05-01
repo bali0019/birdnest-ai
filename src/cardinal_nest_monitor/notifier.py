@@ -198,10 +198,10 @@ class Notifier:
                 "inline": True,
             },
             {
-                "name": "Mother present",
+                "name": "Attending parent present",
                 "value": (
-                    decision.mother_present.capitalize()
-                    if decision.mother_present is not None
+                    decision.attending_parent_present.capitalize()
+                    if decision.attending_parent_present is not None
                     else "—"
                 ),
                 "inline": True,

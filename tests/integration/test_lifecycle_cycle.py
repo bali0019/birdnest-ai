@@ -146,7 +146,7 @@ async def test_hatch_alert_fires_through_pipeline_after_confirmation(
         f"expected no hatch alert on 1st sighting, got {len(hatch_alerts)}"
     )
     assert store.get_state().lifecycle_stage == "incubation"
-    assert store.get_state().first_chick_sighting_ts is not None
+    assert store.get_state().first_young_sighting_ts is not None
 
     # 2nd snap within confirmation window — hatch alert fires
     t2 = t1 + 1800
@@ -301,7 +301,7 @@ async def test_egg_laying_to_incubation_cycle_via_pipeline(
         "UPDATE state SET "
         " lifecycle_stage = 'egg_laying', "
         " egg_laying_started_ts = ?, "
-        " last_mother_seen_ts = ? "
+        " last_attending_parent_seen_ts = ? "
         "WHERE id = 1",
         (egg_laying_start_ts, now_ts - 60),
     )

@@ -382,9 +382,9 @@ async def test_combined_mode_end_to_end_matches_legacy_behavior(
         f"PARITY VIOLATION: return alert severity = {decision.severity}, "
         f"expected LOW."
     )
-    assert decision.rule_id == "mother_returned", (
+    assert decision.rule_id == "attending_parent_returned", (
         f"PARITY VIOLATION: return alert rule_id = {decision.rule_id}, "
-        f"expected 'mother_returned'."
+        f"expected 'attending_parent_returned'."
     )
 
     # Post-return state sanity: in_absence should be False again.

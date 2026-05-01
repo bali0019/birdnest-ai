@@ -5,7 +5,7 @@ count, the last threat sighting, and every alert sent (for cooldown lookups).
 Single-row `state` table for derived fields; append-only `observations` and
 `alerts` tables for full history (and for prompt-tuning later).
 
-NOTE on the `mother_returned` rule (events.py rule 5): the caller pattern
+NOTE on the `attending_parent_returned` rule (events.py rule 5): the caller pattern
 record() → evaluate() means in_absence has already been flipped to False by
 the time evaluate sees it for the returning-mother case. The events module
 implements the rule best-effort using the alerts table as backstop.
@@ -49,7 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_obs_ts ON observations(ts);
 
 CREATE TABLE IF NOT EXISTS state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
-  last_mother_seen_ts REAL,
+  last_attending_parent_seen_ts REAL,
   last_known_egg_count INTEGER,
   last_threat_seen_ts REAL,
   last_threat_species TEXT,
@@ -58,11 +58,11 @@ CREATE TABLE IF NOT EXISTS state (
   in_absence INTEGER NOT NULL DEFAULT 0,
   absence_started_ts REAL,
   lifecycle_stage TEXT NOT NULL DEFAULT 'incubation',
-  last_chick_count INTEGER,
+  last_young_count INTEGER,
   hatch_detected_ts REAL,
   fledge_detected_ts REAL,
   last_feeding_event_ts REAL,
-  first_chick_sighting_ts REAL,
+  first_young_sighting_ts REAL,
   egg_laying_started_ts REAL,
   incubation_started_ts REAL,
   pending_ambiguous_frame_ts REAL
@@ -197,12 +197,9 @@ class StateStore:
             "ALTER TABLE state ADD COLUMN absence_started_ts REAL",
             # Lifecycle tracking (2026-04-16)
             "ALTER TABLE state ADD COLUMN lifecycle_stage TEXT NOT NULL DEFAULT 'incubation'",
-            "ALTER TABLE state ADD COLUMN last_chick_count INTEGER",
             "ALTER TABLE state ADD COLUMN hatch_detected_ts REAL",
             "ALTER TABLE state ADD COLUMN fledge_detected_ts REAL",
             "ALTER TABLE state ADD COLUMN last_feeding_event_ts REAL",
-            # 2-sighting hatch confirmation (2026-04-16, Step 9)
-            "ALTER TABLE state ADD COLUMN first_chick_sighting_ts REAL",
             # 6-stage lifecycle expansion (2026-04-16): add building_nest and
             # egg_laying stages with their own started_ts timestamps. Backfill
             # tool (tools/lifecycle_backfill.py) populates these for the
@@ -214,17 +211,33 @@ class StateStore:
             # threat species, we treat the first frame as a "pending ambiguous"
             # candidate (no alert). A second consecutive matching frame within
             # the pending window = soft presence. See events.py
-            # is_ambiguous_occupied_cup() for the exact predicate. Stores the
-            # timestamp of the first frame so the confirmation window can be
-            # checked on the next snap.
+            # is_ambiguous_occupied_cup() for the exact predicate.
             "ALTER TABLE state ADD COLUMN pending_ambiguous_frame_ts REAL",
+            # Phase 4 (2026-05-01) — generic species refactor. Rename
+            # cardinal-coded runtime columns to species-neutral names. RENAME
+            # runs first so DBs created on the generic-nest-monitor branch
+            # before this commit migrate forward in place; the ADD COLUMN
+            # below catches DBs that never had either name (and is a harmless
+            # duplicate-column on fresh DBs created via _SCHEMA_SQL).
+            "ALTER TABLE state RENAME COLUMN last_mother_seen_ts TO last_attending_parent_seen_ts",
+            "ALTER TABLE state RENAME COLUMN last_chick_count TO last_young_count",
+            "ALTER TABLE state RENAME COLUMN first_chick_sighting_ts TO first_young_sighting_ts",
+            "ALTER TABLE state ADD COLUMN last_attending_parent_seen_ts REAL",
+            "ALTER TABLE state ADD COLUMN last_young_count INTEGER",
+            "ALTER TABLE state ADD COLUMN first_young_sighting_ts REAL",
         ]
         for sql in _migrations:
             try:
                 self._conn.execute(sql)
             except sqlite3.OperationalError as e:
                 msg = str(e).lower()
-                if "duplicate column" not in msg and "already exists" not in msg:
+                # "duplicate column" / "already exists": ADD COLUMN re-runs.
+                # "no such column": RENAME re-runs after the column is gone.
+                if (
+                    "duplicate column" not in msg
+                    and "already exists" not in msg
+                    and "no such column" not in msg
+                ):
                     raise
 
     # ── State row helpers ──────────────────────────────────────────────
@@ -245,16 +258,16 @@ class StateStore:
                 return default
         absence_started_ts = _opt("absence_started_ts")
         lifecycle_stage = _opt("lifecycle_stage", "incubation") or "incubation"
-        last_chick_count = _opt("last_chick_count")
+        last_young_count = _opt("last_young_count")
         hatch_detected_ts = _opt("hatch_detected_ts")
         fledge_detected_ts = _opt("fledge_detected_ts")
         last_feeding_event_ts = _opt("last_feeding_event_ts")
-        first_chick_sighting_ts = _opt("first_chick_sighting_ts")
+        first_young_sighting_ts = _opt("first_young_sighting_ts")
         egg_laying_started_ts = _opt("egg_laying_started_ts")
         incubation_started_ts = _opt("incubation_started_ts")
         pending_ambiguous_frame_ts = _opt("pending_ambiguous_frame_ts")
         return NestState(
-            last_mother_seen_ts=row["last_mother_seen_ts"],
+            last_attending_parent_seen_ts=row["last_attending_parent_seen_ts"],
             last_known_egg_count=row["last_known_egg_count"],
             last_threat_seen_ts=row["last_threat_seen_ts"],
             last_threat_species=row["last_threat_species"],
@@ -262,11 +275,11 @@ class StateStore:
             last_absence_alert_ts=row["last_absence_alert_ts"],
             in_absence=bool(row["in_absence"]),
             lifecycle_stage=lifecycle_stage,
-            last_chick_count=last_chick_count,
+            last_young_count=last_young_count,
             hatch_detected_ts=hatch_detected_ts,
             fledge_detected_ts=fledge_detected_ts,
             last_feeding_event_ts=last_feeding_event_ts,
-            first_chick_sighting_ts=first_chick_sighting_ts,
+            first_young_sighting_ts=first_young_sighting_ts,
             egg_laying_started_ts=egg_laying_started_ts,
             incubation_started_ts=incubation_started_ts,
             pending_ambiguous_frame_ts=pending_ambiguous_frame_ts,
@@ -301,7 +314,7 @@ class StateStore:
         is_stale = latest_ts is not None and ts < latest_ts
 
         row = self._load_row()
-        last_mother_seen_ts = row["last_mother_seen_ts"]
+        last_attending_parent_seen_ts = row["last_attending_parent_seen_ts"]
         last_known_egg_count = row["last_known_egg_count"]
         last_threat_seen_ts = row["last_threat_seen_ts"]
         last_threat_species = row["last_threat_species"]
@@ -317,11 +330,11 @@ class StateStore:
         absence_started_ts = _opt("absence_started_ts")
         lifecycle_stage = _opt("lifecycle_stage", "incubation") or "incubation"
         prev_lifecycle_stage = lifecycle_stage
-        last_chick_count = _opt("last_chick_count")
+        last_young_count = _opt("last_young_count")
         hatch_detected_ts = _opt("hatch_detected_ts")
         fledge_detected_ts = _opt("fledge_detected_ts")
         last_feeding_event_ts = _opt("last_feeding_event_ts")
-        first_chick_sighting_ts = _opt("first_chick_sighting_ts")
+        first_young_sighting_ts = _opt("first_young_sighting_ts")
         egg_laying_started_ts = _opt("egg_laying_started_ts")
         incubation_started_ts = _opt("incubation_started_ts")
         pending_ambiguous_frame_ts = _opt("pending_ambiguous_frame_ts")
@@ -341,12 +354,12 @@ class StateStore:
             _conf_ok = (not _quiet_now and not _ir_now) or observation.confidence >= 0.75
 
             if observation.attending_parent_on_nest == "true" and _conf_ok:
-                last_mother_seen_ts = ts
+                last_attending_parent_seen_ts = ts
                 in_absence = False
             elif observation.attending_parent_on_nest == "false" and _conf_ok:
                 if (
-                    last_mother_seen_ts is not None
-                    and (ts - last_mother_seen_ts) >= _ABSENCE_ENTER_SECONDS
+                    last_attending_parent_seen_ts is not None
+                    and (ts - last_attending_parent_seen_ts) >= _ABSENCE_ENTER_SECONDS
                 ):
                     in_absence = True
             if (
@@ -381,7 +394,7 @@ class StateStore:
         # Policy (Codex): first ambiguous occupied-cup frame = no alert,
         # store as pending candidate. Second consecutive matching frame
         # within AMBIGUOUS_CONFIRM_WINDOW_S = soft presence (update
-        # last_mother_seen_ts, clear in_absence, clear pending). Stale
+        # last_attending_parent_seen_ts, clear in_absence, clear pending). Stale
         # pending (no 2nd within window) is discarded on next frame.
         # Explicit named threats (brown_thrasher, blue_jay, squirrel,
         # chipmunk) bypass this path and fire normally.
@@ -394,14 +407,14 @@ class StateStore:
                     and (ts - pending_ambiguous_frame_ts) <= _window
                 ):
                     # 2nd consecutive match within window → soft presence.
-                    last_mother_seen_ts = ts
+                    last_attending_parent_seen_ts = ts
                     in_absence = False
                     absence_started_ts = None
                     pending_ambiguous_frame_ts = None
                     log.info(
                         "ambig-cup: 2nd consecutive frame within %ds → "
                         "soft-presence (cleared in_absence, updated "
-                        "last_mother_seen_ts=%.0f)",
+                        "last_attending_parent_seen_ts=%.0f)",
                         _window, ts,
                     )
                 else:
@@ -439,9 +452,20 @@ class StateStore:
             # heavily-obscured frames must not regress/advance stage.
             and observation.nest_visible
         ):
-            # Update chick count when chicks are confidently visible.
+            # Phase 6 — pull lifecycle thresholds from the active species
+            # profile. Defaults match the cardinal values that have been in
+            # production since 2026-04-16; profiles for other species can
+            # override these without code changes.
+            from cardinal_nest_monitor.species import get_species_profile
+            _lc = get_species_profile().lifecycle
+            _sitting_window_s = _lc.sitting_ratio_window_hours * 3600
+            _young_confirm_window_s = _lc.young_confirmation_window_hours * 3600
+            _fledge_absence_s = _lc.fledge_absence_hours * 3600
+            _fledge_threat_free_s = _lc.fledge_threat_free_hours * 3600
+
+            # Update young count when young are confidently visible.
             if observation.young_visible == "true" and observation.young_count_estimate is not None:
-                last_chick_count = int(observation.young_count_estimate)
+                last_young_count = int(observation.young_count_estimate)
 
             # Feeding event — latest timestamp. Used downstream to suppress
             # MEDIUM long-absence alerts for a cooldown window.
@@ -480,12 +504,12 @@ class StateStore:
             if (
                 lifecycle_stage == "egg_laying"
                 and egg_laying_started_ts is not None
-                and (ts - egg_laying_started_ts) >= 24 * 3600
+                and (ts - egg_laying_started_ts) >= _sitting_window_s
             ):
                 cur = self._conn.execute(
                     "SELECT observation_json FROM observations "
                     "WHERE ts >= ? AND ts <= ? AND observation_json IS NOT NULL",
-                    (ts - 24 * 3600, ts),
+                    (ts - _sitting_window_s, ts),
                 )
                 confident_total = 0
                 confident_on_nest = 0
@@ -505,16 +529,17 @@ class StateStore:
                     # "uncertain" doesn't count — neither in numerator nor
                     # denominator — so partial-view/IR observations neither
                     # block nor accelerate the transition.
-                if confident_total >= 24:  # at least ~1 confident obs/hour
+                if confident_total >= _lc.sitting_ratio_window_hours:
                     ratio = confident_on_nest / confident_total
-                    if ratio >= 0.70:
+                    if ratio >= _lc.sitting_ratio_threshold:
                         lifecycle_stage = "incubation"
                         if incubation_started_ts is None:
                             incubation_started_ts = ts
                         log.info(
                             "lifecycle: transitioning egg_laying → incubation "
-                            "at ts=%.0f (%.0f%% sitting over 24h, n=%d)",
-                            ts, ratio * 100, confident_total,
+                            "at ts=%.0f (%.0f%% sitting over %dh, n=%d)",
+                            ts, ratio * 100,
+                            _lc.sitting_ratio_window_hours, confident_total,
                         )
 
             # Transition: incubation → feeding (with 2-sighting confirmation)
@@ -524,28 +549,27 @@ class StateStore:
             # food-in-beak artifacts or misidentifies shadows.
             #
             # State machine:
-            #   1st chick signal: store first_chick_sighting_ts, stay in
+            #   1st chick signal: store first_young_sighting_ts, stay in
             #     incubation ("waiting for confirmation").
             #   2nd signal within 4h: transition to feeding, fire 🐣.
             #   No 2nd signal within 4h: reset — this sighting is stale,
             #     treat the next one as a new "1st sighting".
-            _CONFIRM_WINDOW_S = 4 * 3600
             if lifecycle_stage == "incubation":
                 if is_confirmed_chick_sighting(observation):
-                    if first_chick_sighting_ts is None:
+                    if first_young_sighting_ts is None:
                         # 1st sighting — record and wait for confirmation.
-                        first_chick_sighting_ts = ts
+                        first_young_sighting_ts = ts
                         log.info(
-                            "lifecycle: 1st chick sighting at ts=%.0f; "
-                            "waiting for confirmation within 4h",
-                            ts,
+                            "lifecycle: 1st young sighting at ts=%.0f; "
+                            "waiting for confirmation within %dh",
+                            ts, _lc.young_confirmation_window_hours,
                         )
-                    elif (ts - first_chick_sighting_ts) <= _CONFIRM_WINDOW_S:
+                    elif (ts - first_young_sighting_ts) <= _young_confirm_window_s:
                         # 2nd sighting within window — CONFIRMED, transition.
                         lifecycle_stage = "feeding"
                         if hatch_detected_ts is None:
                             hatch_detected_ts = ts
-                        first_chick_sighting_ts = None  # clear (we've committed)
+                        first_young_sighting_ts = None  # clear (we've committed)
                         log.info(
                             "lifecycle: chick sighting CONFIRMED — "
                             "transitioning incubation → feeding at ts=%.0f",
@@ -557,22 +581,22 @@ class StateStore:
                         log.info(
                             "lifecycle: prior chick sighting stale "
                             "(%.0fs ago); restarting confirmation window",
-                            ts - first_chick_sighting_ts,
+                            ts - first_young_sighting_ts,
                         )
-                        first_chick_sighting_ts = ts
+                        first_young_sighting_ts = ts
 
             # Transition: feeding → fledging
             # Trigger: no cardinal visits for ≥12 hours AND no threat event
             # in prior 48 hours AND chicks were previously confirmed.
-            # We check this by comparing ts against last_mother_seen_ts and
+            # We check this by comparing ts against last_attending_parent_seen_ts and
             # last_threat_seen_ts.
             if (
                 lifecycle_stage == "feeding"
-                and last_mother_seen_ts is not None
-                and (ts - last_mother_seen_ts) >= 12 * 3600
+                and last_attending_parent_seen_ts is not None
+                and (ts - last_attending_parent_seen_ts) >= _fledge_absence_s
                 and (
                     last_threat_seen_ts is None
-                    or (ts - last_threat_seen_ts) >= 48 * 3600
+                    or (ts - last_threat_seen_ts) >= _fledge_threat_free_s
                 )
                 and hatch_detected_ts is not None
             ):
@@ -627,35 +651,35 @@ class StateStore:
                 return self._row_to_state(self._load_row())
             self._conn.execute(
                 "UPDATE state SET "
-                " last_mother_seen_ts = ?, "
+                " last_attending_parent_seen_ts = ?, "
                 " last_known_egg_count = ?, "
                 " last_threat_seen_ts = ?, "
                 " last_threat_species = ?, "
                 " in_absence = ?, "
                 " absence_started_ts = ?, "
                 " lifecycle_stage = ?, "
-                " last_chick_count = ?, "
+                " last_young_count = ?, "
                 " hatch_detected_ts = ?, "
                 " fledge_detected_ts = ?, "
                 " last_feeding_event_ts = ?, "
-                " first_chick_sighting_ts = ?, "
+                " first_young_sighting_ts = ?, "
                 " egg_laying_started_ts = ?, "
                 " incubation_started_ts = ?, "
                 " pending_ambiguous_frame_ts = ? "
                 "WHERE id = 1",
                 (
-                    last_mother_seen_ts,
+                    last_attending_parent_seen_ts,
                     last_known_egg_count,
                     last_threat_seen_ts,
                     last_threat_species,
                     1 if in_absence else 0,
                     absence_started_ts,
                     lifecycle_stage,
-                    last_chick_count,
+                    last_young_count,
                     hatch_detected_ts,
                     fledge_detected_ts,
                     last_feeding_event_ts,
-                    first_chick_sighting_ts,
+                    first_young_sighting_ts,
                     egg_laying_started_ts,
                     incubation_started_ts,
                     pending_ambiguous_frame_ts,
@@ -701,7 +725,7 @@ class StateStore:
                 "UPDATE state SET last_alert_severity = ? WHERE id = 1",
                 (decision.severity.value,),
             )
-            if decision.rule_id == "mother_returned":
+            if decision.rule_id == "attending_parent_returned":
                 self._conn.execute(
                     "UPDATE state SET last_absence_alert_ts = ? WHERE id = 1",
                     (ts,),
@@ -770,11 +794,11 @@ class StateStore:
         """True if a prior alert with the same `rule_id` exists within
         `window_s` seconds before `ts` (defaulting to now).
 
-        Codex P2 round 5: mother_returned and lifecycle alerts (hatch,
+        Codex P2 round 5: attending_parent_returned and lifecycle alerts (hatch,
         fledge, egg_laying_begin, incubation_begin) need rule-scoped
         cooldowns rather than severity-scoped. cooldown_active() keys
         off severity + species and would either over-suppress (a LOW
-        hatch alert silencing a real mother_returned) or never match
+        hatch alert silencing a real attending_parent_returned) or never match
         at all (lifecycle alerts have empty species, so the species
         match always failed silently — state-machine gating was the
         only thing preventing double-fires there).

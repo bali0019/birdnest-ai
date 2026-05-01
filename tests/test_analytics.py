@@ -150,8 +150,8 @@ def test_alerts_aggregated_by_severity(store):
     t0 = time.time() - 1800
     for sev, rule in [
         (Severity.HIGH, "predator_absent"),
-        (Severity.LOW, "mother_returned"),
-        (Severity.LOW, "mother_returned"),
+        (Severity.LOW, "attending_parent_returned"),
+        (Severity.LOW, "attending_parent_returned"),
     ]:
         decision = AlertDecision(
             severity=sev,
@@ -167,7 +167,7 @@ def test_alerts_aggregated_by_severity(store):
     assert report["alerts"]["total"] == 3
     assert report["alerts"]["by_severity"]["HIGH"] == 1
     assert report["alerts"]["by_severity"]["LOW"] == 2
-    assert report["alerts"]["by_rule"]["mother_returned"] == 2
+    assert report["alerts"]["by_rule"]["attending_parent_returned"] == 2
 
 
 def test_system_metrics_snap_counts(store):

@@ -151,7 +151,7 @@ def test_burst_cadence_fires_immediately_after_absence(settings):
     """absence just started → cadence must be burst (30s)."""
     now_ts = 1_700_000_000.0
     state = NestState(
-        last_mother_seen_ts=now_ts - 130,
+        last_attending_parent_seen_ts=now_ts - 130,
         in_absence=True,
         absence_started_ts=now_ts,  # flipped this very instant
     )
@@ -166,7 +166,7 @@ def test_burst_cadence_holds_within_window(settings):
     """60s into a 180s burst window → still burst cadence."""
     now_ts = 1_700_000_000.0
     state = NestState(
-        last_mother_seen_ts=now_ts - 200,
+        last_attending_parent_seen_ts=now_ts - 200,
         in_absence=True,
         absence_started_ts=now_ts - 60,  # 60s into the burst
     )
@@ -181,7 +181,7 @@ def test_burst_cadence_expires_after_duration(settings):
     """200s after absence onset (past 180s burst) → normal absence (60s)."""
     now_ts = 1_700_000_000.0
     state = NestState(
-        last_mother_seen_ts=now_ts - 400,
+        last_attending_parent_seen_ts=now_ts - 400,
         in_absence=True,
         absence_started_ts=now_ts - 200,  # past burst_duration_seconds (180)
     )
@@ -200,7 +200,7 @@ def test_burst_cadence_expires_exactly_at_duration_boundary(settings):
     """
     now_ts = 1_700_000_000.0
     state = NestState(
-        last_mother_seen_ts=now_ts - 300,
+        last_attending_parent_seen_ts=now_ts - 300,
         in_absence=True,
         absence_started_ts=now_ts - 180,
     )
@@ -221,7 +221,7 @@ def test_burst_cadence_respects_quiet_hours(settings, monkeypatch):
     monkeypatch.setattr(settings, "quiet_hours", "00:00-23:59")
     now_ts = 1_700_000_000.0
     state = NestState(
-        last_mother_seen_ts=now_ts - 130,
+        last_attending_parent_seen_ts=now_ts - 130,
         in_absence=True,
         absence_started_ts=now_ts,  # burst would fire
     )
@@ -236,7 +236,7 @@ def test_normal_cadence_when_not_absent(settings):
     """No absence at all → default 300s cadence."""
     now_ts = 1_700_000_000.0
     state = NestState(
-        last_mother_seen_ts=now_ts - 30,
+        last_attending_parent_seen_ts=now_ts - 30,
         in_absence=False,
         absence_started_ts=None,
     )
@@ -256,7 +256,7 @@ def test_burst_cadence_defensive_when_absence_started_ts_missing(settings):
     """
     now_ts = 1_700_000_000.0
     state = NestState(
-        last_mother_seen_ts=now_ts - 400,
+        last_attending_parent_seen_ts=now_ts - 400,
         in_absence=True,
         absence_started_ts=None,  # pre-migration row
     )
