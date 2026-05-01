@@ -386,6 +386,8 @@ See [`.env.example`](./.env.example) for the full list with documentation.
 
 Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos, on five separate channels. Two macOS LaunchAgents managed by launchd. pydantic for schema validation. Full pytest suite including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
 
+The system started cardinal-only and is now species-driven via TOML profiles. The cardinal narrative on this page is the tuned reference deployment; pointing the runtime at a different open-cup nesting passerine is a one-file change. See [`src/cardinal_nest_monitor/species/README.md`](src/cardinal_nest_monitor/species/README.md) for the profile authoring guide.
+
 ---
 
 ## Project structure
@@ -406,6 +408,9 @@ src/cardinal_nest_monitor/
   schema.py            Pydantic models (NestObservation, Severity, AlertDecision)
   blink_client.py      Blink camera connect, snap, motion
   evidence.py          Per event evidence directory writer
+  prompts.py           Render analyzer + prefilter prompts from species profile
+  species/             TOML species profiles (cardinal + robin) + loader
+                       See species/README.md for the profile authoring guide.
   tools/
     lifecycle_backfill.py    One shot tool to infer historical lifecycle timestamps
     lifecycle_regression.py  Real image regression suite for analyzer prompt changes
