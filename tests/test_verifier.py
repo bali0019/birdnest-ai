@@ -7,8 +7,8 @@ decides what to do when Sonnet's and Opus's AlertDecisions diverge.
 
 from __future__ import annotations
 
-from cardinal_nest_monitor.schema import AlertDecision, Severity
-from cardinal_nest_monitor.verifier import (
+from birdnest_ai.schema import AlertDecision, Severity
+from birdnest_ai.verifier import (
     compute_verification_decision,
     should_verify,
 )
@@ -106,8 +106,8 @@ def test_verify_alert_forwards_is_backfill_to_evaluate():
     """
     import asyncio
     from unittest.mock import patch, AsyncMock, MagicMock
-    from cardinal_nest_monitor.schema import NestObservation, NestState
-    from cardinal_nest_monitor import verifier as verifier_mod
+    from birdnest_ai.schema import NestObservation, NestState
+    from birdnest_ai import verifier as verifier_mod
 
     sonnet_obs = NestObservation(
         attending_parent_present="false", attending_parent_on_nest="false",
@@ -152,8 +152,8 @@ def test_verify_alert_default_is_backfill_false():
     callers (most calls) get the existing behavior."""
     import asyncio
     from unittest.mock import patch, AsyncMock, MagicMock
-    from cardinal_nest_monitor.schema import NestObservation, NestState
-    from cardinal_nest_monitor import verifier as verifier_mod
+    from birdnest_ai.schema import NestObservation, NestState
+    from birdnest_ai import verifier as verifier_mod
 
     sonnet_obs = NestObservation(
         attending_parent_present="false", attending_parent_on_nest="false",
@@ -193,8 +193,8 @@ def test_verify_alert_default_is_backfill_false():
 
 def test_is_cardinal_positive_no_threat_helper():
     """Direct unit test of the helper."""
-    from cardinal_nest_monitor.schema import NestObservation
-    from cardinal_nest_monitor.verifier import is_cardinal_positive_no_threat
+    from birdnest_ai.schema import NestObservation
+    from birdnest_ai.verifier import is_cardinal_positive_no_threat
 
     def _obs(**overrides):
         base = dict(
@@ -248,8 +248,8 @@ def test_cardinal_positive_no_threat_opus_suppresses_sonnet_high():
     """
     import asyncio
     from unittest.mock import patch, AsyncMock, MagicMock
-    from cardinal_nest_monitor.schema import NestObservation, NestState
-    from cardinal_nest_monitor import verifier as verifier_mod
+    from birdnest_ai.schema import NestObservation, NestState
+    from birdnest_ai import verifier as verifier_mod
 
     sonnet_obs = NestObservation(
         attending_parent_present="uncertain", attending_parent_on_nest="uncertain",
@@ -301,8 +301,8 @@ def test_cardinal_positive_with_thrasher_does_not_override():
     """
     import asyncio
     from unittest.mock import patch, AsyncMock, MagicMock
-    from cardinal_nest_monitor.schema import NestObservation, NestState
-    from cardinal_nest_monitor import verifier as verifier_mod
+    from birdnest_ai.schema import NestObservation, NestState
+    from birdnest_ai import verifier as verifier_mod
 
     sonnet_obs = NestObservation(
         attending_parent_present="false", attending_parent_on_nest="false",
@@ -351,8 +351,8 @@ def test_cardinal_override_suppresses_critical_too():
     """Content override must work for CRITICAL just as for HIGH."""
     import asyncio
     from unittest.mock import patch, AsyncMock, MagicMock
-    from cardinal_nest_monitor.schema import NestObservation, NestState
-    from cardinal_nest_monitor import verifier as verifier_mod
+    from birdnest_ai.schema import NestObservation, NestState
+    from birdnest_ai import verifier as verifier_mod
 
     sonnet_obs = NestObservation(
         attending_parent_present="uncertain", attending_parent_on_nest="uncertain",
@@ -398,8 +398,8 @@ def test_cardinal_override_suppresses_critical_too():
 def test_finalize_verification_suppresses_cardinal_positive_no_threat():
     """Direct test: Opus identifies cardinal + no threat → suppress."""
     from unittest.mock import MagicMock
-    from cardinal_nest_monitor.schema import NestObservation, NestState
-    from cardinal_nest_monitor.verifier import finalize_verification
+    from birdnest_ai.schema import NestObservation, NestState
+    from birdnest_ai.verifier import finalize_verification
 
     opus_obs = NestObservation(
         attending_parent_present="true", attending_parent_on_nest="false",
@@ -420,8 +420,8 @@ def test_finalize_verification_suppresses_cardinal_positive_no_threat():
 def test_finalize_verification_forwards_is_backfill():
     """Direct test: is_backfill gets forwarded to evaluate()."""
     from unittest.mock import patch, MagicMock
-    from cardinal_nest_monitor.schema import NestObservation, NestState
-    from cardinal_nest_monitor import verifier as verifier_mod
+    from birdnest_ai.schema import NestObservation, NestState
+    from birdnest_ai import verifier as verifier_mod
 
     opus_obs = NestObservation(
         attending_parent_present="false", attending_parent_on_nest="false",

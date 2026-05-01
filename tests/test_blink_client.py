@@ -1,4 +1,4 @@
-"""Security tests for cardinal_nest_monitor.blink_client.
+"""Security tests for birdnest_ai.blink_client.
 
 Covers the hardened 2FA PIN file handoff:
   * _pin_file_is_safe() rejects symlinks, non-regular files, wrong ownership,
@@ -22,7 +22,7 @@ import stat
 
 import pytest
 
-from cardinal_nest_monitor.blink_client import (
+from birdnest_ai.blink_client import (
     _ensure_pin_dir_secure,
     _pin_file_is_safe,
     _sanitize_clip_timestamp,
@@ -250,7 +250,7 @@ import asyncio
 import time
 from unittest.mock import MagicMock
 
-from cardinal_nest_monitor.blink_client import _wait_for_next_snap_deadline
+from birdnest_ai.blink_client import _wait_for_next_snap_deadline
 
 
 def _fake_settings(default_interval: int = 300):

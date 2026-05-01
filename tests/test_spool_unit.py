@@ -1,4 +1,4 @@
-"""Unit tests for cardinal_nest_monitor.spool.
+"""Unit tests for birdnest_ai.spool.
 
 The spool module implements a durable on-disk queue:
   {spool_dir}/pending/     — snaps waiting for analyzer
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from cardinal_nest_monitor.spool import (
+from birdnest_ai.spool import (
     claim_next,
     drop_stale,
     mark_complete,
@@ -448,7 +448,7 @@ def test_claim_rejects_directory_at_snap_path(tmp_path: Path) -> None:
 
 def test_is_safe_regular_file_helper_direct(tmp_path: Path) -> None:
     """Direct unit test of _is_safe_regular_file covering each rejection branch."""
-    from cardinal_nest_monitor.spool import _is_safe_regular_file
+    from birdnest_ai.spool import _is_safe_regular_file
 
     # Missing file → False
     missing = tmp_path / "does_not_exist.jpg"
@@ -496,7 +496,7 @@ def test_claim_rejects_wrong_owner_via_mocked_lstat(
     # Pre-fetch the real uid then swap getuid to return a definitely-different one.
     real_uid = os.getuid()
     fake_uid = real_uid + 999_999  # guaranteed to not match any real owner
-    monkeypatch.setattr("cardinal_nest_monitor.spool.os.getuid", lambda: fake_uid)
+    monkeypatch.setattr("birdnest_ai.spool.os.getuid", lambda: fake_uid)
 
     result = claim_next(spool)
     assert result is None, (

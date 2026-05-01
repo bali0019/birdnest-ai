@@ -6,11 +6,11 @@
 
 ## Reading this file under the generic refactor
 
-This branch (`generic-nest-monitor`) is the species-agnostic version of the original cardinal-only deployment. The Python package and runtime are still named `cardinal_nest_monitor` for backwards compatibility, and most of this file was written during the cardinal-only era.
+This branch (`generic-nest-monitor`) is the species-agnostic version of the original cardinal-only deployment. The Python package and runtime are now `birdnest_ai`; most of this file was written during the cardinal-only era when the package was `cardinal_nest_monitor`. References to the old package name in historical sections are intentional context.
 
 When you read about **Brown Thrashers**, the **female cardinal**, the **rose bush**, **April 2026 incidents**, or specific dollar/snap/cadence numbers, treat them as **example deployment values from the cardinal profile** — the test deployment that found and fixed every hard-won lesson recorded below. They are not requirements. The architecture, rules, hard-won knowledge in §1–§30, and operational guidance apply to any open-cup nesting passerine running through the profile-driven runtime.
 
-Species-specific behavior is now driven entirely by the active TOML profile. Two profiles ship: `northern_cardinal` (the tuned reference; alert copy and field marks byte-identical to pre-refactor) and `american_robin` (the structural proof). See [`src/cardinal_nest_monitor/species/README.md`](src/cardinal_nest_monitor/species/README.md) for the authoring guide and the test contract that pins profile-driven behavior.
+Species-specific behavior is now driven entirely by the active TOML profile. Two profiles ship: `northern_cardinal` (the tuned reference; alert copy and field marks byte-identical to pre-refactor) and `american_robin` (the structural proof). See [`src/birdnest_ai/species/README.md`](src/birdnest_ai/species/README.md) for the authoring guide and the test contract that pins profile-driven behavior.
 
 ---
 
@@ -35,7 +35,7 @@ The full design rationale is in `~/.claude/plans/reactive-tickling-rose.md`.
 **Two independent launchd services** (decoupled 2026-04-15 — see §20):
 
 ```
-DOWNLOADER SERVICE (com.cardinalnest.downloader):
+DOWNLOADER SERVICE (com.birdnest.downloader):
   cam.snap_picture() → fresh JPEG (~6s) → data/spool/pending/ (atomic rename)
   Cadence is dynamic (reads state.sqlite read-only via WAL mode):
     if in quiet hours (23:00–05:00 local):    1800s = 30 min
@@ -43,7 +43,7 @@ DOWNLOADER SERVICE (com.cardinalnest.downloader):
     else:                                      300s = 5 min
   If analyzer is down >10 min: falls back to safe 60s constant.
 
-ANALYZER SERVICE (com.cardinalnest.analyzer):
+ANALYZER SERVICE (com.birdnest.analyzer):
   Polls data/spool/pending/ every 1s → claims newest snap first
     → analyzer.analyze() via claude-sonnet-4-6 (~$0.01)
     → if CRITICAL/HIGH: blind Opus 4.6 verification (~$0.05)
@@ -62,7 +62,7 @@ MOTION POLL LOOP (every 15s, currently no-op — runs inside downloader):
 - Mom absent (1-min cadence — Pattern A): up to 1 min ← peak risk window
 - Quiet hours: up to 30 min
 
-**Zero-gap redeploys:** restarting the analyzer (`launchctl kickstart -k com.cardinalnest.analyzer`) never interrupts snap capture. Snaps queue in the spool and drain when the analyzer comes back. See §20 for the full playbook.
+**Zero-gap redeploys:** restarting the analyzer (`launchctl kickstart -k com.birdnest.analyzer`) never interrupts snap capture. Snaps queue in the spool and drain when the analyzer comes back. See §20 for the full playbook.
 
 **If motion detection is re-enabled**, motion events trigger out-of-cycle snaps with ~60–120s floor (clip-upload bottleneck, see Hard-won knowledge §11).
 
@@ -97,7 +97,7 @@ Daily volume at these settings (assuming ~95% on-nest / ~5% absent during day):
 ## File map (where to look for what)
 
 ```
-src/cardinal_nest_monitor/
+src/birdnest_ai/
   schema.py           Pydantic models + Anthropic tool_use schemas (NestObservation, PrefilterResult, AlertDecision, Severity, NestState). Single source of truth.
   config.py           pydantic-settings. Loads .env. get_settings() is cached.
   blink_client.py     connect() + motion_loop() + snap_loop() + download_clip(). The Blink/blinkpy stuff lives here.
@@ -114,13 +114,13 @@ src/cardinal_nest_monitor/
   downloader_loop.py  Blink→spool producer. Own watchdog + lifecycle embeds. See §20.
   analyzer_loop.py    Spool→Pipeline consumer. Live/backfill routing. Runs analyzer-side schedulers. See §20.
   tools/
-    test_discord.py   `python -m cardinal_nest_monitor.tools.test_discord` — sends 🧪 embed.
+    test_discord.py   `python -m birdnest_ai.tools.test_discord` — sends 🧪 embed.
     dryrun.py         `python -m ...tools.dryrun --image PATH [--escalate]` — pipeline test on local JPEG.
     pause.py          `python -m ...tools.pause [minutes] | --clear` — write/clear pause.lock.
 
-launchd/com.cardinalnest.monitor.plist       Legacy combined LaunchAgent (rollback). Installed at ~/Library/LaunchAgents/ (edit paths in the plist to match your system).
-launchd/com.cardinalnest.downloader.plist    Downloader-only LaunchAgent. See §20.
-launchd/com.cardinalnest.analyzer.plist      Analyzer-only LaunchAgent. See §20.
+launchd/com.birdnest.monitor.plist       Legacy combined LaunchAgent (rollback). Installed at ~/Library/LaunchAgents/ (edit paths in the plist to match your system).
+launchd/com.birdnest.downloader.plist    Downloader-only LaunchAgent. See §20.
+launchd/com.birdnest.analyzer.plist      Analyzer-only LaunchAgent. See §20.
 .env                                          gitignored. Real secrets here.
 .env.example                                  Committed template (no secrets). Documents all env vars.
 blink_credentials.json                        gitignored. Persisted Blink auth token (saved by --auth-only).
@@ -153,19 +153,19 @@ Blink emails a 6-digit PIN that must be entered to complete OAuth. The naïve `i
 **Solution implemented in `blink_client.py`: `_read_2fa_pin()` falls through three sources:**
 1. `BLINK_PIN` env var (instant)
 2. Real interactive stdin if attached to a TTY
-3. **Polling `/tmp/cardinal_nest_blink_pin` for up to 5 minutes** ← this is the path that works in non-interactive contexts
+3. **Polling `/tmp/birdnest_ai_blink_pin` for up to 5 minutes** ← this is the path that works in non-interactive contexts
 
 Full first-time auth workflow:
 
 ```bash
 # Run in background — script triggers PIN email, then waits
-rm -f /tmp/cardinal_nest_blink_pin
+rm -f /tmp/birdnest_ai_blink_pin
 source venv/bin/activate
-python -m cardinal_nest_monitor --auth-only &
+python -m birdnest_ai --auth-only &
 
 # Check email at the BLINK_USERNAME inbox for the latest PIN
 # Drop it into the file:
-echo "123456" > /tmp/cardinal_nest_blink_pin
+echo "123456" > /tmp/birdnest_ai_blink_pin
 
 # Background script picks it up within 2s, completes auth, exits.
 # blink_credentials.json is now written and reusable indefinitely.
@@ -199,7 +199,7 @@ When outside `ACTIVE_HOURS`, the SCHEDULED snap loop sleeps 60s and rechecks. Bu
 
 ### 6. SIGKILL vs SIGTERM shutdown
 
-The `notifier.send_system_message(title="🔴 Cardinal Nest Monitor offline", ...)` call in `main.py`'s finally block only runs on SIGTERM (catchable). If a process dies via SIGKILL or `kill -9`, no offline embed fires. **Bash's `TaskStop` may use SIGKILL.** `launchctl bootout` sends SIGTERM and should trigger a clean shutdown sequence. If you're stopping the system to test, use `launchctl bootout gui/$(id -u)/com.cardinalnest.monitor` rather than `kill -9`.
+The `notifier.send_system_message(title="🔴 Birdnest AI offline", ...)` call in `main.py`'s finally block only runs on SIGTERM (catchable). If a process dies via SIGKILL or `kill -9`, no offline embed fires. **Bash's `TaskStop` may use SIGKILL.** `launchctl bootout` sends SIGTERM and should trigger a clean shutdown sequence. If you're stopping the system to test, use `launchctl bootout gui/$(id -u)/com.birdnest.monitor` rather than `kill -9`.
 
 ### 7. The plan-mode trap
 
@@ -283,7 +283,7 @@ Both errors had the same root cause: the original analyzer prompt didn't teach t
 
 ### 16. Two-model verification on CRITICAL/HIGH alerts (added 2026-04-15)
 
-After the false-CRITICAL incident (§14), we added a blind Opus second-opinion pass on any CRITICAL or HIGH alert before firing. The logic lives in `src/cardinal_nest_monitor/verifier.py`.
+After the false-CRITICAL incident (§14), we added a blind Opus second-opinion pass on any CRITICAL or HIGH alert before firing. The logic lives in `src/birdnest_ai/verifier.py`.
 
 **Flow:**
 ```
@@ -310,7 +310,7 @@ The `_VERIFICATION_NUDGE` constant in `verifier.py` is the exact text appended t
 
 **Latency:** +3–6s on CRITICAL/HIGH alerts while Opus re-analyzes. Acceptable given the overall reaction floor is 60–120s for motion events.
 
-**Alert embed format:** when verification runs, the embed gets an extra `✓ Verification (claude-opus-4-6)` field showing Opus's confidence and summary. If Opus DISAGREED (suppressed), the alert doesn't fire at all — only a log line captures the suppression. Look for `Opus verification: ... → SUPPRESSED` in `~/Library/Logs/cardinal-nest-monitor/out.log` to see what Opus caught.
+**Alert embed format:** when verification runs, the embed gets an extra `✓ Verification (claude-opus-4-6)` field showing Opus's confidence and summary. If Opus DISAGREED (suppressed), the alert doesn't fire at all — only a log line captures the suppression. Look for `Opus verification: ... → SUPPRESSED` in `~/Library/Logs/birdnest-ai/out.log` to see what Opus caught.
 
 **Toggle:** `VERIFY_ALERTS_WITH_OPUS=false` in `.env` disables verification (falls back to one-pass alerts). Use sparingly — the verification is specifically there to prevent the false-CRITICAL trust-destruction mode from §14.
 
@@ -334,10 +334,10 @@ cd $PROJECT_ROOT
 source venv/bin/activate
 for img in evidence/reference/northern_cardinal/historical_thrasher_{1,2,3}.jpg; do
   echo "=== $img ==="
-  python -m cardinal_nest_monitor.tools.dryrun --image "$img" --escalate
+  python -m birdnest_ai.tools.dryrun --image "$img" --escalate
 done
 # Plus the false-positive image:
-python -m cardinal_nest_monitor.tools.dryrun \
+python -m birdnest_ai.tools.dryrun \
   --image evidence/2026-04-15/12-26-45_CRITICAL_brown_thrasher/snap.jpg --escalate
 ```
 
@@ -482,9 +482,9 @@ Every external I/O call in the hot path MUST be wrapped in `asyncio.wait_for(...
 
 | Service | launchd label | `--role` | What it does | What it does NOT do |
 |---|---|---|---|---|
-| Downloader | `com.cardinalnest.downloader` | `downloader` | Blink API → raw JPEG → `data/spool/pending/` | No Anthropic calls, no Discord alerts, no state writes |
-| Analyzer | `com.cardinalnest.analyzer` | `analyzer` | Polls spool → `Pipeline.on_image` → Discord alerts/feed/analytics | No Blink API access, no snap capture |
-| Combined (dev) | `com.cardinalnest.monitor` | `combined` | Both loops in one process (legacy plist, byte-identical to pre-decouple) | N/A — this is the dev/smoke-test path |
+| Downloader | `com.birdnest.downloader` | `downloader` | Blink API → raw JPEG → `data/spool/pending/` | No Anthropic calls, no Discord alerts, no state writes |
+| Analyzer | `com.birdnest.analyzer` | `analyzer` | Polls spool → `Pipeline.on_image` → Discord alerts/feed/analytics | No Blink API access, no snap capture |
+| Combined (dev) | `com.birdnest.monitor` | `combined` | Both loops in one process (legacy plist, byte-identical to pre-decouple) | N/A — this is the dev/smoke-test path |
 
 **Spool protocol (`data/spool/`):**
 - Downloader writes `{ts}_snap.jpg` + `{ts}_meta.json` to `pending/` via atomic rename (tmp-file + fsync + `os.rename`). Analyzer never sees half-written files.
@@ -509,23 +509,23 @@ The `[BACKFILL]` prefix and separate webhook (`DISCORD_BACKFILL_WEBHOOK_URL`) ke
 
 ```bash
 # Restart ONLY the analyzer (downloader keeps capturing → zero snap gap):
-launchctl kickstart -k gui/$(id -u)/com.cardinalnest.analyzer
+launchctl kickstart -k gui/$(id -u)/com.birdnest.analyzer
 
 # Restart ONLY the downloader (rare — only when blink_client.py changes):
-launchctl kickstart -k gui/$(id -u)/com.cardinalnest.downloader
+launchctl kickstart -k gui/$(id -u)/com.birdnest.downloader
 
 # Restart BOTH (when shared code like config.py or state.py changes):
-launchctl kickstart -k gui/$(id -u)/com.cardinalnest.downloader
-launchctl kickstart -k gui/$(id -u)/com.cardinalnest.analyzer
+launchctl kickstart -k gui/$(id -u)/com.birdnest.downloader
+launchctl kickstart -k gui/$(id -u)/com.birdnest.analyzer
 
 # Tail logs (separate files per service):
-tail -F ~/Library/Logs/cardinal-nest-monitor/downloader.out.log
-tail -F ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log
+tail -F ~/Library/Logs/birdnest-ai/downloader.out.log
+tail -F ~/Library/Logs/birdnest-ai/analyzer.out.log
 
 # Rollback to single-process (if the split has issues):
-launchctl bootout gui/$(id -u)/com.cardinalnest.downloader
-launchctl bootout gui/$(id -u)/com.cardinalnest.analyzer
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ (edit paths in the plist to match your system)com.cardinalnest.monitor.plist
+launchctl bootout gui/$(id -u)/com.birdnest.downloader
+launchctl bootout gui/$(id -u)/com.birdnest.analyzer
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ (edit paths in the plist to match your system)com.birdnest.monitor.plist
 ```
 
 **Git tags for rollback:**
@@ -533,10 +533,10 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ (edit paths in the plis
 - `post-decouple-phase1` — code + tests for the decoupled architecture, 83 tests green. Combined mode is byte-identical to pre-decouple.
 
 **Files added:**
-- `src/cardinal_nest_monitor/spool.py` — atomic-rename file queue primitives.
-- `src/cardinal_nest_monitor/downloader_loop.py` — Blink → spool producer, own watchdog + lifecycle embeds.
-- `src/cardinal_nest_monitor/analyzer_loop.py` — spool → Pipeline consumer, live/backfill routing, runs all analyzer-side schedulers.
-- `launchd/com.cardinalnest.{downloader,analyzer}.plist` — two LaunchAgent plists with separate log files.
+- `src/birdnest_ai/spool.py` — atomic-rename file queue primitives.
+- `src/birdnest_ai/downloader_loop.py` — Blink → spool producer, own watchdog + lifecycle embeds.
+- `src/birdnest_ai/analyzer_loop.py` — spool → Pipeline consumer, live/backfill routing, runs all analyzer-side schedulers.
+- `launchd/com.birdnest.{downloader,analyzer}.plist` — two LaunchAgent plists with separate log files.
 - `tests/test_spool_unit.py` (11 tests), `tests/integration/test_spool_lifecycle.py` (5 tests), `tests/integration/test_backfill_routing.py` (4 tests).
 
 **Don't regress this.** A future Claude might be tempted to merge the two services back into one "for simplicity." That is the exact path that produced the 2026-04-15 outage cascade. The decoupled architecture exists so that the volatile analyzer code (Anthropic calls, Discord webhooks, rules engine, verifier) can be iterated on without ever interrupting the stable downloader (Blink API + disk writes). If you need to change both, restart both — but the default deploy path should only touch the analyzer. The downloader changes maybe once a quarter; the analyzer changes weekly.
@@ -570,7 +570,7 @@ First three minutes: 6 snaps instead of 3. After that, relaxes to the normal abs
 - **Bug A (split mode):** `blink_client.py::snap_loop` computed `get_interval()` ONCE per cycle and committed to a single long wait of `interval - 6` seconds. When the analyzer flipped `in_absence=True` mid-wait, the downloader was already asleep for 294 s (at 300 s default) and wouldn't re-check state until the 180 s burst window had elapsed. Every absence event in the 2026-04-18 logs went `300s default → 60s absence`, never through `30s burst`.
 - **Bug B (combined mode):** `main.py`'s `get_interval` branched only on `quiet > absence > default`. It never even checked `absence_started_ts` or `burst_duration_seconds`. Burst was aspirational config in combined mode — a latent parity gap that would bite anyone rolling back to single-process for debugging.
 
-Fix shape: shared `src/cardinal_nest_monitor/cadence.py::compute_snap_interval(settings, state, now_ts)` pure helper enforces the full precedence (quiet > burst > absence > default). Both `downloader_loop.py::get_interval` and `main.py::get_interval` delegate to it. `snap_loop` got a new `_wait_for_next_snap_deadline(snap_now, last_snap_monotonic, get_interval_fn, settings, poll_interval=15.0)` helper that re-evaluates `get_interval()` every 15 s so a mid-wait shrink takes effect on THIS wait, not the next cycle. Three load-bearing properties of the helper:
+Fix shape: shared `src/birdnest_ai/cadence.py::compute_snap_interval(settings, state, now_ts)` pure helper enforces the full precedence (quiet > burst > absence > default). Both `downloader_loop.py::get_interval` and `main.py::get_interval` delegate to it. `snap_loop` got a new `_wait_for_next_snap_deadline(snap_now, last_snap_monotonic, get_interval_fn, settings, poll_interval=15.0)` helper that re-evaluates `get_interval()` every 15 s so a mid-wait shrink takes effect on THIS wait, not the next cycle. Three load-bearing properties of the helper:
 
 1. **Monotonic anchor** (`time.monotonic()` for deadline math; `time.time()` only inside `compute_snap_interval` for quiet-hours and absence-started arithmetic). NTP adjustments must not skew inter-snap spacing.
 2. **No snap-immediately on re-eval** — when a shrink is observed, the return happens when `last_snap_monotonic + (new_interval - 6) <= monotonic_now`, NOT at the poll-tick boundary. Preserves the intended 30 s burst semantics (would otherwise produce snaps at 20 s or whatever the current poll tick happens to be).
@@ -602,7 +602,7 @@ Log labels distinguish the two burst types: `cadence: 60s → 30s (burst)` is ca
 
 **Cross-connection race fix (Codex 2026-04-23).** The session-burst arming helper originally did two reads: first `SELECT MAX(ts) FROM observations`, then `store.get_state()`. Under the split-process topology where the downloader's RO connection polls while the analyzer's writer connection records, two separate SELECTs could straddle a mid-record() commit boundary. `StateStore.record()` used to autocommit its observations INSERT and its state UPDATE as two separate transactions — the RO reader could therefore observe the new observation row (INSERT committed) WHILE state.in_absence was still the pre-record value (UPDATE pending). Result: the arming helper would log "mom on nest" based on stale state and never arm session-burst, in exactly the deploy-during-absence case the feature exists to handle.
 
-Two-part fix (`src/cardinal_nest_monitor/state.py` + `cadence.py`):
+Two-part fix (`src/birdnest_ai/state.py` + `cadence.py`):
 
 1. **Writer atomicity.** `record()` and `record_alert()` now wrap their INSERT + paired state UPDATE in `BEGIN IMMEDIATE` / `COMMIT` (with a `ROLLBACK` on exception). BEGIN IMMEDIATE grabs the write lock upfront so contention fails fast rather than mid-transaction. Under WAL mode, concurrent readers see either the pre-transaction snapshot or the post-transaction snapshot — never the inconsistent middle. The `is_stale` early-return path also commits cleanly so the observations history INSERT is durable even when the derived-state UPDATE is skipped.
 
@@ -693,9 +693,9 @@ Fires a LOW alert `incubation_begin` with title "🪺 Incubation has begun" to t
 
 Usage:
 ```bash
-python -m cardinal_nest_monitor.tools.lifecycle_backfill --auto
+python -m birdnest_ai.tools.lifecycle_backfill --auto
 # or manual:
-python -m cardinal_nest_monitor.tools.lifecycle_backfill \
+python -m birdnest_ai.tools.lifecycle_backfill \
   --incubation-started 2026-04-15 --egg-laying-started 2026-04-11
 ```
 
@@ -720,7 +720,7 @@ Idempotent; refuses to overwrite set values without `--force`. For the current m
 `evidence/reference/northern_cardinal/lifecycle/` has 13 curated Wikimedia Commons images covering incubation + chick stages, each with `.expected.json` ground truth. Phase 7 (2026-05-01) moved these from the flat `evidence/reference/lifecycle/` layout into the cardinal species subdirectory; `tools/lifecycle_regression.py` resolves the directory through the active profile's `reference_assets.directory` rather than the legacy flat path. Before setting `LIFECYCLE_TRACKING_ENABLED=true`:
 
 ```bash
-python -m cardinal_nest_monitor.tools.lifecycle_regression
+python -m birdnest_ai.tools.lifecycle_regression
 # Must report: ALL PASS — safe to enable LIFECYCLE_TRACKING_ENABLED=true
 ```
 
@@ -761,7 +761,7 @@ Other properties:
 - Shutdown order: analytics closes AFTER alert + feed notifiers, so a slow analytics shutdown can't delay the `🔴 offline` embed
 - `max_workers=1` means multiple analytics runs never compound; sequential only
 
-**Where the metrics live:** `src/cardinal_nest_monitor/analytics.py` has `compute_report(store, window_end_ts, window_hours, analyzer_model)` as the sole entry point. Trip detection walks confident `cardinal_on_nest` transitions (true→false = leave, false→true = return). Low-confidence and "uncertain" observations don't disturb transitions.
+**Where the metrics live:** `src/birdnest_ai/analytics.py` has `compute_report(store, window_end_ts, window_hours, analyzer_model)` as the sole entry point. Trip detection walks confident `cardinal_on_nest` transitions (true→false = leave, false→true = return). Low-confidence and "uncertain" observations don't disturb transitions.
 
 **Two schedulers run for the analytics channel (both use the same dedicated executor):**
 
@@ -773,7 +773,7 @@ Other properties:
 Both produce the same embed shape. Set `ANALYTICS_DAILY_HOUR=-1` to disable the daily one.
 
 **Tools:**
-- `python -m cardinal_nest_monitor.tools.analytics_once [--hours N]` — fire a single report immediately (useful for smoke-testing or ad-hoc reports without waiting for the next scheduler tick).
+- `python -m birdnest_ai.tools.analytics_once [--hours N]` — fire a single report immediately (useful for smoke-testing or ad-hoc reports without waiting for the next scheduler tick).
 
 **To disable:** unset `DISCORD_ANALYTICS_WEBHOOK_URL` in `.env` and restart launchd. The alert + feed channels are unaffected.
 
@@ -815,21 +815,21 @@ Both produce the same embed shape. Set `ANALYTICS_DAILY_HOUR=-1` to disable the 
 
 ```bash
 # ── Check it's running (two-service mode, see §20) ───────────────
-launchctl list | grep cardinalnest
-# look for: both com.cardinalnest.downloader AND com.cardinalnest.analyzer
+launchctl list | grep birdnest
+# look for: both com.birdnest.downloader AND com.birdnest.analyzer
 # with exit code 0 and a PID
 
 # ── Tail live logs (separate per service) ─────────────────────────
-tail -F ~/Library/Logs/cardinal-nest-monitor/downloader.out.log   # downloader
-tail -F ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log     # analyzer
+tail -F ~/Library/Logs/birdnest-ai/downloader.out.log   # downloader
+tail -F ~/Library/Logs/birdnest-ai/analyzer.out.log     # analyzer
 # Legacy combined logs (when using --role=combined):
-tail -F ~/Library/Logs/cardinal-nest-monitor/out.log
+tail -F ~/Library/Logs/birdnest-ai/out.log
 
 # ── Pause for battery swap ────────────────────────────────────────
 cd $PROJECT_ROOT
 source venv/bin/activate
-python -m cardinal_nest_monitor.tools.pause 10           # pause 10 min
-python -m cardinal_nest_monitor.tools.pause --clear      # resume now
+python -m birdnest_ai.tools.pause 10           # pause 10 min
+python -m birdnest_ai.tools.pause --clear      # resume now
 
 # ── Install deps (lockfile, see §30) ──────────────────────────────
 # Production / CI (exact-pin reproducibility — preferred for deploy):
@@ -841,40 +841,40 @@ pip freeze --all > requirements.lock && git add requirements.lock
 
 # ── Stop / start / restart (two-service mode) ────────────────────
 # Analyzer-only restart (most common — code changes to analyzer/events/notifier):
-launchctl kickstart -k gui/$(id -u)/com.cardinalnest.analyzer
+launchctl kickstart -k gui/$(id -u)/com.birdnest.analyzer
 # Downloader-only restart (rare — only when blink_client.py changes):
-launchctl kickstart -k gui/$(id -u)/com.cardinalnest.downloader
+launchctl kickstart -k gui/$(id -u)/com.birdnest.downloader
 # Full stop (both services):
-launchctl bootout gui/$(id -u)/com.cardinalnest.downloader
-launchctl bootout gui/$(id -u)/com.cardinalnest.analyzer
+launchctl bootout gui/$(id -u)/com.birdnest.downloader
+launchctl bootout gui/$(id -u)/com.birdnest.analyzer
 # Full start (both services):
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ (edit paths in the plist to match your system)com.cardinalnest.downloader.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ (edit paths in the plist to match your system)com.cardinalnest.analyzer.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ (edit paths in the plist to match your system)com.birdnest.downloader.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ (edit paths in the plist to match your system)com.birdnest.analyzer.plist
 # Rollback to single-process combined mode (see §20 for details):
-# launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ (edit paths in the plist to match your system)com.cardinalnest.monitor.plist
+# launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ (edit paths in the plist to match your system)com.birdnest.monitor.plist
 
 # ── Smoke tests (foreground, no launchd) ─────────────────────────
 source venv/bin/activate
-python -m cardinal_nest_monitor.tools.test_discord                          # 🧪 embed test
-python -m cardinal_nest_monitor.tools.dryrun --image evidence/SAMPLE.jpg    # pipeline against local JPEG
-python -m cardinal_nest_monitor                                             # full system, foreground; Ctrl+C to stop
+python -m birdnest_ai.tools.test_discord                          # 🧪 embed test
+python -m birdnest_ai.tools.dryrun --image evidence/SAMPLE.jpg    # pipeline against local JPEG
+python -m birdnest_ai                                             # full system, foreground; Ctrl+C to stop
 
 # ── Lifecycle backfill (one-shot, see §23) ────────────────────────
 # Auto-infer egg_laying_started_ts + incubation_started_ts from observation
 # history (looks for earliest 24h window with ≥70% sitting ratio):
-python -m cardinal_nest_monitor.tools.lifecycle_backfill --dry-run --auto
-python -m cardinal_nest_monitor.tools.lifecycle_backfill --auto
+python -m birdnest_ai.tools.lifecycle_backfill --dry-run --auto
+python -m birdnest_ai.tools.lifecycle_backfill --auto
 # Manual override (when --auto can't find a qualifying window):
-python -m cardinal_nest_monitor.tools.lifecycle_backfill \
+python -m birdnest_ai.tools.lifecycle_backfill \
     --incubation-started 2026-04-14T00:00 \
     --egg-laying-started 2026-04-13
 # Idempotent — re-runs without --force are no-ops.
 
 # ── Re-auth Blink (token expired or stale) ───────────────────────
-rm -f /tmp/cardinal_nest_blink_pin
-python -m cardinal_nest_monitor --auth-only &
+rm -f /tmp/birdnest_ai_blink_pin
+python -m birdnest_ai --auth-only &
 # wait for email, then:
-echo "PIN_FROM_EMAIL" > /tmp/cardinal_nest_blink_pin
+echo "PIN_FROM_EMAIL" > /tmp/birdnest_ai_blink_pin
 
 # ── Review recent events ──────────────────────────────────────────
 ls evidence/$(date +%Y-%m-%d)/   # NONE_unk = quiet snap, anything else = alert fired
@@ -1091,18 +1091,18 @@ Three related hardening items landed in the 2026-04-18 security pass.
 
 **(d) Secret rotation runbook.** Three secrets live outside git; here's how to rotate each without an outage.
 
-- **Anthropic API key.** Revoke the old key at https://console.anthropic.com/settings/keys (in the same workspace — keys are workspace-scoped, see §3). Create a new key in the same workspace. Edit `.env` and update `ANTHROPIC_API_KEY`. Restart the analyzer only: `launchctl kickstart -k gui/$(id -u)/com.cardinalnest.analyzer`. The downloader does not use Anthropic and keeps running. Verify new key works: `tail -F ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log` and watch for the next snap getting a clean response from Sonnet. If the key is bad you'll see `AuthenticationError` in the log.
+- **Anthropic API key.** Revoke the old key at https://console.anthropic.com/settings/keys (in the same workspace — keys are workspace-scoped, see §3). Create a new key in the same workspace. Edit `.env` and update `ANTHROPIC_API_KEY`. Restart the analyzer only: `launchctl kickstart -k gui/$(id -u)/com.birdnest.analyzer`. The downloader does not use Anthropic and keeps running. Verify new key works: `tail -F ~/Library/Logs/birdnest-ai/analyzer.out.log` and watch for the next snap getting a clean response from Sonnet. If the key is bad you'll see `AuthenticationError` in the log.
 
-- **Discord webhooks.** For each affected channel (alerts / feed / analytics / backfill / lifecycle / test): in Discord, open channel settings → Integrations → Webhooks, delete the existing webhook, create a new one, copy the URL. Edit `.env` and update the corresponding `DISCORD_*_WEBHOOK_URL`. Restart analyzer only (downloader doesn't post to Discord): `launchctl kickstart -k gui/$(id -u)/com.cardinalnest.analyzer`. Smoke test: `source venv/bin/activate && python -m cardinal_nest_monitor.tools.test_discord` — sends a 🧪 embed to the alerts channel using the rotated URL.
+- **Discord webhooks.** For each affected channel (alerts / feed / analytics / backfill / lifecycle / test): in Discord, open channel settings → Integrations → Webhooks, delete the existing webhook, create a new one, copy the URL. Edit `.env` and update the corresponding `DISCORD_*_WEBHOOK_URL`. Restart analyzer only (downloader doesn't post to Discord): `launchctl kickstart -k gui/$(id -u)/com.birdnest.analyzer`. Smoke test: `source venv/bin/activate && python -m birdnest_ai.tools.test_discord` — sends a 🧪 embed to the alerts channel using the rotated URL.
 
 - **Blink account password.** Change the password in the Blink mobile app. Locally, delete the cached credentials and re-run the 2FA flow:
   ```bash
   rm blink_credentials.json
-  python -m cardinal_nest_monitor --auth-only
-  # PIN is read from ~/.cache/cardinal_nest_monitor/blink_pin (see Agent 2 note)
-  # or from the legacy /tmp/cardinal_nest_blink_pin fallback.
+  python -m birdnest_ai --auth-only
+  # PIN is read from ~/.cache/birdnest_ai/blink_pin (see Agent 2 note)
+  # or from the legacy /tmp/birdnest_ai_blink_pin fallback.
   ```
-  Wait for the email → write the PIN to the file → script picks it up and writes a new `blink_credentials.json`. Restart downloader: `launchctl kickstart -k gui/$(id -u)/com.cardinalnest.downloader`. The analyzer does not auth to Blink so it's unaffected.
+  Wait for the email → write the PIN to the file → script picks it up and writes a new `blink_credentials.json`. Restart downloader: `launchctl kickstart -k gui/$(id -u)/com.birdnest.downloader`. The analyzer does not auth to Blink so it's unaffected.
 
 Don't skip the "restart only one service" part of each recipe — the whole point of the §20 decouple is that you can rotate an Anthropic key without interrupting snap capture, and rotate a Blink password without touching the Discord-facing analyzer.
 
@@ -1146,13 +1146,13 @@ Knobs in order of smallest impact first:
 ## Verifying before claiming "it works"
 
 1. `TEST_MODE=true python -m pytest tests/ -v` → all 192 tests pass (154 unit + 38 integration). Includes the lifecycle 6-stage tests, IR-mode suppression tests, the codex round 1-5 regression guards, and the 2026-04-17 false-alarm hotfix coverage (§29): ENABLE_EGG_COUNT_ALERTS flag, direct_nest_interaction invariant, ambiguous-occupied-cup path (predicate + pending state + soft presence), chick confidence floor 0.75, schema migration test, verifier content-aware suppression, and the chronological stateful replay of the full 2026-04-17 production day.
-2. `launchctl list | grep cardinalnest` → both `com.cardinalnest.downloader` and `com.cardinalnest.analyzer` show PIDs + exit code 0.
-3. `tail ~/Library/Logs/cardinal-nest-monitor/downloader.out.log` → `Blink connected; N cameras`, `downloader watchdog started`.
-4. `tail ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log` → `spool consumer started`, `feed_worker started`, `analytics_scheduler started`, `watchdog started`.
+2. `launchctl list | grep birdnest` → both `com.birdnest.downloader` and `com.birdnest.analyzer` show PIDs + exit code 0.
+3. `tail ~/Library/Logs/birdnest-ai/downloader.out.log` → `Blink connected; N cameras`, `downloader watchdog started`.
+4. `tail ~/Library/Logs/birdnest-ai/analyzer.out.log` → `spool consumer started`, `feed_worker started`, `analytics_scheduler started`, `watchdog started`.
 5. Check primary Discord channel for 🟢 startup embeds from both services within ~10s.
 6. Check feed Discord channel for first snap embed within one cadence cycle (~5 min day, ~30 min quiet).
 7. `ls data/spool/pending/` → should be empty (analyzer drains faster than downloader writes).
-8. **Sanity-check the analyzer on a recent snap:** `python -m cardinal_nest_monitor.tools.dryrun --image evidence/$(date +%Y-%m-%d)/<latest>/snap.jpg --escalate` — verify reasonable JSON output.
+8. **Sanity-check the analyzer on a recent snap:** `python -m birdnest_ai.tools.dryrun --image evidence/$(date +%Y-%m-%d)/<latest>/snap.jpg --escalate` — verify reasonable JSON output.
 9. **Run the species-ID regression suite (before deploying ANY prompt change):** the four reference images in `evidence/reference/` — see §15 for the exact pass/fail criteria. Three must flag as threats, one (the cardinal FP) must NOT fire CRITICAL.
 10. **Run `TEST_MODE=true python -m pytest tests/ -v` — mandatory before any non-trivial change to hot-path files** (`analyzer.py`, `events.py`, `main.py`, `blink_client.py`, `notifier.py`, `verifier.py`, `spool.py`, `downloader_loop.py`, `analyzer_loop.py`). See §18 for the full rule. No deploy without a green test suite.
 

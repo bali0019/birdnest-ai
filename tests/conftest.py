@@ -1,4 +1,4 @@
-"""Top-level conftest for the Cardinal Nest Monitor test suite.
+"""Top-level conftest for the Birdnest AI test suite.
 
 Ensures quiet_hours is disabled by default in all unit tests so that
 time-dependent rules (like the quiet-hours MEDIUM suppression) don't
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from cardinal_nest_monitor.config import get_settings
+from birdnest_ai.config import get_settings
 
 
 @pytest.fixture(autouse=True)
@@ -46,11 +46,11 @@ def use_profile(request, monkeypatch):
     pin alert copy and rule_id taxonomy under both profiles so any drift
     introduced by prompt rendering will surface as a test failure.
     """
-    from cardinal_nest_monitor.species import (
+    from birdnest_ai.species import (
         clear_species_profile_cache,
         get_species_profile,
     )
-    from cardinal_nest_monitor.species.loader import builtin_profile_path
+    from birdnest_ai.species.loader import builtin_profile_path
 
     slug = request.param
     monkeypatch.setattr(

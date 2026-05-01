@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import pytest
 
-from cardinal_nest_monitor._image import (
+from birdnest_ai._image import (
     _MAX_JPEG_BYTES,
     downscale_jpeg_b64,
     prepare_multi_image,

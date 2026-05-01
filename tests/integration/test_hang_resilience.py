@@ -34,9 +34,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from cardinal_nest_monitor import analyzer as analyzer_mod
-from cardinal_nest_monitor import main as main_mod
-from cardinal_nest_monitor.config import get_settings
+from birdnest_ai import analyzer as analyzer_mod
+from birdnest_ai import main as main_mod
+from birdnest_ai.config import get_settings
 
 
 def _pipeline(store, notifier, evidence):
@@ -64,7 +64,7 @@ def test_hard_timeout_production_default_is_60s():
     new SDK with different timeout behaviour, etc.), update both this
     assertion AND the §19 table in the same commit.
     """
-    from cardinal_nest_monitor import analyzer as _analyzer_mod
+    from birdnest_ai import analyzer as _analyzer_mod
 
     assert _analyzer_mod.HARD_TIMEOUT_SECONDS == 60.0, (
         f"analyzer_mod.HARD_TIMEOUT_SECONDS changed to "
@@ -102,7 +102,7 @@ async def test_analyzer_timeout_does_not_hang(
 
     async def slow_analyze(*args, **kwargs):
         await asyncio.sleep(5)  # well past the 1 s bound; unreachable return
-        from cardinal_nest_monitor.schema import NestObservation
+        from birdnest_ai.schema import NestObservation
         return NestObservation(
             attending_parent_present="uncertain",
             attending_parent_on_nest="uncertain",
@@ -369,7 +369,7 @@ def test_snap_loop_dispatches_on_snap_via_create_task():
     NOT await it directly. Only the identifier changed.
     """
     import inspect
-    from cardinal_nest_monitor import blink_client as bc
+    from birdnest_ai import blink_client as bc
 
     src = inspect.getsource(bc.snap_loop)
 

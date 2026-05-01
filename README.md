@@ -2,7 +2,7 @@
 
 A profile-driven AI nest monitor for open-cup nesting passerines. Adaptive snap cadence, two-model species ID with blind verification, lifecycle tracking from egg-laying through fledge, Discord alerts on five channels.
 
-The Python package and runtime are still named `cardinal_nest_monitor` for compatibility with the original cardinal-only deployment that this branch generalizes. New profiles drop in as TOML — see [`src/cardinal_nest_monitor/species/README.md`](src/cardinal_nest_monitor/species/README.md) for the authoring guide.
+New species profiles drop in as TOML — see [`src/birdnest_ai/species/README.md`](src/birdnest_ai/species/README.md) for the authoring guide.
 
 ---
 
@@ -190,7 +190,7 @@ cp .env.example .env
 ### Blink authentication (one time)
 
 ```bash
-python -m cardinal_nest_monitor --auth-only
+python -m birdnest_ai --auth-only
 # Check email for the 2FA PIN, enter it when prompted.
 # Saves blink_credentials.json. No re-auth needed until token expires (~yearly).
 ```
@@ -198,16 +198,16 @@ python -m cardinal_nest_monitor --auth-only
 ### Deploy
 
 ```bash
-mkdir -p ~/Library/Logs/cardinal-nest-monitor
+mkdir -p ~/Library/Logs/birdnest-ai
 
 # Install and start both services
-cp launchd/com.cardinalnest.downloader.plist ~/Library/LaunchAgents/
-cp launchd/com.cardinalnest.analyzer.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.cardinalnest.downloader.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.cardinalnest.analyzer.plist
+cp launchd/com.birdnest.downloader.plist ~/Library/LaunchAgents/
+cp launchd/com.birdnest.analyzer.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.birdnest.downloader.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.birdnest.analyzer.plist
 
 # Verify both are running
-launchctl list | grep cardinalnest
+launchctl list | grep birdnest
 ```
 
 ### Run the tests
@@ -228,11 +228,11 @@ The two LaunchAgent services are the production deploy. For development you can 
 source venv/bin/activate
 
 # Combined: both downloader and analyzer in one process. Easiest for dev.
-python -m cardinal_nest_monitor --role combined
+python -m birdnest_ai --role combined
 
 # Or run them separately, the way the launchd plists do:
-python -m cardinal_nest_monitor --role downloader   # in one terminal
-python -m cardinal_nest_monitor --role analyzer     # in another
+python -m birdnest_ai --role downloader   # in one terminal
+python -m birdnest_ai --role analyzer     # in another
 ```
 
 Ctrl+C shuts down cleanly. The downloader keeps writing to the spool and the analyzer keeps draining it; they coordinate through `data/state.sqlite` in WAL mode.
@@ -243,27 +243,27 @@ Ctrl+C shuts down cleanly. The downloader keeps writing to the spool and the ana
 
 ```bash
 # Smoke test the Discord webhook
-python -m cardinal_nest_monitor.tools.test_discord
+python -m birdnest_ai.tools.test_discord
 
 # Run the full pipeline against a single local JPEG, no live camera needed.
 # Useful when iterating on the analyzer prompt.
-python -m cardinal_nest_monitor.tools.dryrun --image evidence/reference/northern_cardinal/historical_thrasher_1.jpg
+python -m birdnest_ai.tools.dryrun --image evidence/reference/northern_cardinal/historical_thrasher_1.jpg
 
 # Pause snap capture before walking near the nest. Cleared automatically.
-python -m cardinal_nest_monitor.tools.pause 10        # pause for 10 minutes
-python -m cardinal_nest_monitor.tools.pause --clear   # resume now
+python -m birdnest_ai.tools.pause 10        # pause for 10 minutes
+python -m birdnest_ai.tools.pause --clear   # resume now
 
 # Fire a single behavior analytics report on demand
-python -m cardinal_nest_monitor.tools.analytics_once
+python -m birdnest_ai.tools.analytics_once
 
 # Backfill lifecycle timestamps from observation history
-python -m cardinal_nest_monitor.tools.lifecycle_backfill --auto --dry-run
-python -m cardinal_nest_monitor.tools.lifecycle_backfill --auto
+python -m birdnest_ai.tools.lifecycle_backfill --auto --dry-run
+python -m birdnest_ai.tools.lifecycle_backfill --auto
 
 # Real-image regression suite for analyzer prompt changes (~$0.40 per run).
 # Resolves the lifecycle directory through the active profile's
 # reference_assets manifest.
-python -m cardinal_nest_monitor.tools.lifecycle_regression
+python -m birdnest_ai.tools.lifecycle_regression
 ```
 
 ---
@@ -288,14 +288,14 @@ When `TEST_MODE=true`, the autouse fixture in `tests/integration/conftest.py` re
 
 ```bash
 # Tail the live logs (separate per service)
-tail -F ~/Library/Logs/cardinal-nest-monitor/downloader.out.log
-tail -F ~/Library/Logs/cardinal-nest-monitor/analyzer.out.log
+tail -F ~/Library/Logs/birdnest-ai/downloader.out.log
+tail -F ~/Library/Logs/birdnest-ai/analyzer.out.log
 
 # Restart just the analyzer (most code changes only need this)
-launchctl kickstart -k gui/$(id -u)/com.cardinalnest.analyzer
+launchctl kickstart -k gui/$(id -u)/com.birdnest.analyzer
 
 # Restart just the downloader (rare; only when blink_client.py changes)
-launchctl kickstart -k gui/$(id -u)/com.cardinalnest.downloader
+launchctl kickstart -k gui/$(id -u)/com.birdnest.downloader
 
 # Inspect the current state row
 sqlite3 data/state.sqlite "SELECT * FROM state WHERE id = 1;"
@@ -312,7 +312,7 @@ Most of `.env` is set-and-forget. The handful that change the shape of the syste
 
 | Variable | What it does |
 |---|---|
-| `SPECIES_PROFILE_PATH` | Path to the active species profile TOML. Defaults to the bundled `northern_cardinal` profile. Switch to point the runtime at a different open-cup passerine. See [`species/README.md`](src/cardinal_nest_monitor/species/README.md) |
+| `SPECIES_PROFILE_PATH` | Path to the active species profile TOML. Defaults to the bundled `northern_cardinal` profile. Switch to point the runtime at a different open-cup passerine. See [`species/README.md`](src/birdnest_ai/species/README.md) |
 | `LIFECYCLE_TRACKING_ENABLED` | Default `true`. Set `false` as an escape hatch if a lifecycle false-positive ever fires; no code deploy needed |
 | `VERIFY_ALERTS_WITH_OPUS` | Default `true`. Blind Opus 4.7 second opinion on every CRITICAL/HIGH. ~$0.05 per verified alert. Disable to fall back to single-pass alerting |
 | `DISCORD_LIFECYCLE_WEBHOOK_URL` | Routes 🥚/🪺/🐣/🦅 transition alerts to a dedicated celebration channel. Empty = lifecycle alerts go to the urgent channel |
@@ -333,14 +333,14 @@ See [`.env.example`](./.env.example) for the full list with documentation.
 
 Python 3.11 and asyncio. Claude Sonnet 4.6 for primary analysis on every snap. Claude Opus 4.7 for blind verification on threats. blinkpy 0.25.5 for the Blink camera API. SQLite in WAL mode for state persistence and cross-process coordination. Discord webhooks for alert delivery with attached photos, on five separate channels. Two macOS LaunchAgents managed by launchd. pydantic for schema validation, including the species profile loader. Full pytest suite including integration tests that post to a dedicated test Discord channel so the real alert channels stay clean.
 
-The system started cardinal-only and is now species-driven via TOML profiles. Every species-specific decision the runtime makes is derived from the active profile. See [`src/cardinal_nest_monitor/species/README.md`](src/cardinal_nest_monitor/species/README.md) for the profile authoring guide.
+The system started cardinal-only and is now species-driven via TOML profiles. Every species-specific decision the runtime makes is derived from the active profile. See [`src/birdnest_ai/species/README.md`](src/birdnest_ai/species/README.md) for the profile authoring guide.
 
 ---
 
 ## Project structure
 
 ```
-src/cardinal_nest_monitor/
+src/birdnest_ai/
   analyzer.py          Sonnet 4.6 vision analysis (system prompt rendered from profile)
   prefilter.py         Optional Haiku 4.5 prefilter (system prompt rendered from profile)
   prompts.py           Profile-driven analyzer + prefilter prompt renderer

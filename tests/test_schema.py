@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cardinal_nest_monitor.schema import (
+from birdnest_ai.schema import (
     NestObservation,
     PrefilterResult,
     Severity,

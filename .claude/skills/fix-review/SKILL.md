@@ -86,12 +86,12 @@ EOF
 **Do NOT deploy without explicit user confirmation.** This project has a deployed launchd service and the user decides deploy timing.
 
 When asking, give the shape of the change so they can decide:
-- "Analyzer-only restart needed (rules/prompt change)" → `launchctl kickstart -k gui/$(id -u)/com.cardinalnest.analyzer`
+- "Analyzer-only restart needed (rules/prompt change)" → `launchctl kickstart -k gui/$(id -u)/com.birdnest.analyzer`
 - "Both services needed (shared code in state.py or config.py)" → both kickstarts
 - "No restart needed (log-only / test-only change)" — note this explicitly
 
 If they approve, deploy + post-deploy verify:
-1. `launchctl list | grep cardinalnest` → confirm new PIDs, exit code 0
+1. `launchctl list | grep birdnest` → confirm new PIDs, exit code 0
 2. Tail logs for ~60s or check for post-deploy errors via timestamp filtering
 3. Report clean boot + first-snap success
 

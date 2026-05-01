@@ -11,10 +11,10 @@ import time
 
 import pytest
 
-from cardinal_nest_monitor.config import get_settings
-from cardinal_nest_monitor.events import evaluate
-from cardinal_nest_monitor.schema import NestObservation, Severity
-from cardinal_nest_monitor.state import StateStore
+from birdnest_ai.config import get_settings
+from birdnest_ai.events import evaluate
+from birdnest_ai.schema import NestObservation, Severity
+from birdnest_ai.state import StateStore
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -626,7 +626,7 @@ def _seed_stage(store, stage, **extra_cols):
 def test_building_nest_is_valid_default(store, lifecycle_on):
     """A NestState can be constructed with lifecycle_stage='building_nest'
     and the associated timestamp fields default to None."""
-    from cardinal_nest_monitor.schema import NestState
+    from birdnest_ai.schema import NestState
 
     ns = NestState(lifecycle_stage="building_nest")
     assert ns.lifecycle_stage == "building_nest"

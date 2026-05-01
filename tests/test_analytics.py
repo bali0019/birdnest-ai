@@ -6,9 +6,9 @@ import time
 
 import pytest
 
-from cardinal_nest_monitor.analytics import compute_report
-from cardinal_nest_monitor.schema import NestObservation
-from cardinal_nest_monitor.state import StateStore
+from birdnest_ai.analytics import compute_report
+from birdnest_ai.schema import NestObservation
+from birdnest_ai.state import StateStore
 
 
 def _make_obs(attending_parent_on_nest: str, **overrides) -> NestObservation:
@@ -146,7 +146,7 @@ def test_threats_counted_by_species(store):
 
 
 def test_alerts_aggregated_by_severity(store):
-    from cardinal_nest_monitor.schema import AlertDecision, Severity
+    from birdnest_ai.schema import AlertDecision, Severity
     t0 = time.time() - 1800
     for sev, rule in [
         (Severity.HIGH, "predator_absent"),
@@ -198,7 +198,7 @@ def test_dusk_ir_false_off_does_not_invent_trip(store, monkeypatch):
     this would register as a trip with the IR window's duration. With
     the coercion, the IR frames are presumed on-nest and no trip fires.
     """
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.config import get_settings
     settings = get_settings()
     # Disable wall-clock quiet hours so ONLY the IR-text coercion can save us.
     monkeypatch.setattr(settings, "quiet_hours", "")
@@ -236,7 +236,7 @@ def test_dusk_ir_does_not_inflate_off_nest_seconds(store, monkeypatch):
     presumed on-nest so the report doesn't claim multi-minute off-nest
     time during dusk windows that the live path now correctly suppresses.
     """
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.config import get_settings
     settings = get_settings()
     monkeypatch.setattr(settings, "quiet_hours", "")
 
@@ -266,7 +266,7 @@ def test_dusk_non_ir_off_frame_still_counts_as_off(store, monkeypatch):
     OUTSIDE quiet hours must still register. The IR coercion must not
     silence legitimate daytime absences.
     """
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.config import get_settings
     settings = get_settings()
     monkeypatch.setattr(settings, "quiet_hours", "")
 

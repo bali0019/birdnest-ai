@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from cardinal_nest_monitor.state import StateStore
+from birdnest_ai.state import StateStore
 
 
 def _build_old_shape_db(db_path, columns: list[str]) -> None:
@@ -408,7 +408,7 @@ def test_record_wraps_writes_in_transaction(tmp_path):
     (reader sees observation row before state update) silently
     re-opens.
     """
-    from cardinal_nest_monitor.schema import NestObservation
+    from birdnest_ai.schema import NestObservation
 
     db = tmp_path / "state.sqlite"
     store = StateStore(db)
@@ -467,7 +467,7 @@ def test_record_wraps_writes_in_transaction(tmp_path):
 def test_record_alert_wraps_writes_in_transaction(tmp_path):
     """Same contract for record_alert: INSERT alerts + UPDATE state must
     be atomic."""
-    from cardinal_nest_monitor.schema import AlertDecision, Severity
+    from birdnest_ai.schema import AlertDecision, Severity
 
     db = tmp_path / "state.sqlite"
     store = StateStore(db)
@@ -515,7 +515,7 @@ def test_concurrent_reader_never_sees_post_insert_pre_update_middle(tmp_path):
     """
     import threading
 
-    from cardinal_nest_monitor.schema import NestObservation
+    from birdnest_ai.schema import NestObservation
 
     db = tmp_path / "state.sqlite"
     store = StateStore(db)

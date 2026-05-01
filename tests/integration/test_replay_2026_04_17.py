@@ -27,10 +27,10 @@ from pathlib import Path
 
 import pytest
 
-from cardinal_nest_monitor.events import evaluate
-from cardinal_nest_monitor.schema import AlertDecision, NestObservation, Severity
-from cardinal_nest_monitor.state import StateStore
-from cardinal_nest_monitor.verifier import finalize_verification, should_verify
+from birdnest_ai.events import evaluate
+from birdnest_ai.schema import AlertDecision, NestObservation, Severity
+from birdnest_ai.state import StateStore
+from birdnest_ai.verifier import finalize_verification, should_verify
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -121,8 +121,8 @@ def _replay(entries, tmp_path, monkeypatch) -> dict[str, object]:
     The trace fields let the ambig-cluster assertion test consume the
     same module-scoped replay instead of running the day over again.
     """
-    from cardinal_nest_monitor.config import get_settings
-    from cardinal_nest_monitor.predicates import is_ambiguous_occupied_cup
+    from birdnest_ai.config import get_settings
+    from birdnest_ai.predicates import is_ambiguous_occupied_cup
     # The production DB has lifecycle tracking on + egg-count alerts off;
     # replay those exact settings so cooldowns / ambig / egg_loss behave
     # like they will in production after deploy.

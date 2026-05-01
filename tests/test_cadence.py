@@ -20,10 +20,10 @@ from datetime import datetime, time as dtime
 
 import pytest
 
-from cardinal_nest_monitor.cadence import compute_snap_interval
-from cardinal_nest_monitor.config import get_settings
-from cardinal_nest_monitor.schema import NestState
-from cardinal_nest_monitor.state import StateStore
+from birdnest_ai.cadence import compute_snap_interval
+from birdnest_ai.config import get_settings
+from birdnest_ai.schema import NestState
+from birdnest_ai.state import StateStore
 
 
 def _pick_interval(
@@ -70,7 +70,7 @@ def settings(monkeypatch):
 
 def test_record_sets_absence_started_ts_on_flip(store):
     """in_absence: False → True must set absence_started_ts to the flip ts."""
-    from cardinal_nest_monitor.schema import NestObservation
+    from birdnest_ai.schema import NestObservation
 
     def _obs(**kw):
         base = dict(
@@ -107,7 +107,7 @@ def test_record_sets_absence_started_ts_on_flip(store):
 
 def test_record_clears_absence_started_ts_on_return(store):
     """in_absence: True → False must clear absence_started_ts."""
-    from cardinal_nest_monitor.schema import NestObservation
+    from birdnest_ai.schema import NestObservation
 
     def _obs(**kw):
         base = dict(
@@ -341,7 +341,7 @@ def test_main_combined_mode_get_interval_delegates_to_compute_snap_interval():
     """
     import inspect
 
-    from cardinal_nest_monitor import main as main_mod
+    from birdnest_ai import main as main_mod
 
     src = inspect.getsource(main_mod)
     assert "compute_snap_interval(" in src, (
@@ -454,8 +454,8 @@ async def test_arm_session_burst_arms_when_fresh_observation_confirms_absence(
     """Happy path: startup at T, a post-T observation lands, state shows
     in_absence=True at that moment → session_state gets a monotonic
     deadline roughly equal to now+burst_duration_seconds."""
-    from cardinal_nest_monitor.cadence import arm_session_burst_if_absent
-    from cardinal_nest_monitor.schema import NestObservation
+    from birdnest_ai.cadence import arm_session_burst_if_absent
+    from birdnest_ai.schema import NestObservation
 
     startup_wall_ts = time.time()
 
@@ -506,8 +506,8 @@ async def test_arm_session_burst_does_not_arm_when_mom_on_nest(store, settings):
     """Fresh observation exists BUT shows mom on nest → session-burst
     stays disarmed (no catch-up needed; we have fresh evidence she's
     fine)."""
-    from cardinal_nest_monitor.cadence import arm_session_burst_if_absent
-    from cardinal_nest_monitor.schema import NestObservation
+    from birdnest_ai.cadence import arm_session_burst_if_absent
+    from birdnest_ai.schema import NestObservation
 
     startup_wall_ts = time.time()
 
@@ -541,7 +541,7 @@ async def test_arm_session_burst_skips_when_no_fresh_observation(store, settings
     """Analyzer is down → no post-startup observation arrives within the
     grace window → session-burst stays disarmed. Load-bearing: we don't
     want to fire restart-catch-up on stale pre-restart state."""
-    from cardinal_nest_monitor.cadence import arm_session_burst_if_absent
+    from birdnest_ai.cadence import arm_session_burst_if_absent
 
     startup_wall_ts = time.time()
     # No observations seeded. MAX(ts) will stay None throughout.
@@ -585,7 +585,7 @@ def test_downloader_arms_session_burst_on_startup():
     """
     import inspect
 
-    from cardinal_nest_monitor.downloader_loop import run_downloader_service
+    from birdnest_ai.downloader_loop import run_downloader_service
 
     src = inspect.getsource(run_downloader_service)
     assert _ARMING_CALL_RE.search(src), (
@@ -601,7 +601,7 @@ def test_combined_mode_arms_session_burst_on_startup():
     CLAUDE.md §21."""
     import inspect
 
-    from cardinal_nest_monitor.main import run_combined
+    from birdnest_ai.main import run_combined
 
     src = inspect.getsource(run_combined)
     assert _ARMING_CALL_RE.search(src), (

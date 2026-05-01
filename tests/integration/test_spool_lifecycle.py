@@ -24,11 +24,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from cardinal_nest_monitor import analyzer as analyzer_mod
-from cardinal_nest_monitor import main as main_mod
-from cardinal_nest_monitor import spool
-from cardinal_nest_monitor.config import get_settings
-from cardinal_nest_monitor.schema import Severity
+from birdnest_ai import analyzer as analyzer_mod
+from birdnest_ai import main as main_mod
+from birdnest_ai import spool
+from birdnest_ai.config import get_settings
+from birdnest_ai.schema import Severity
 
 
 # ────────────────────────────────────────────────────────────────────────

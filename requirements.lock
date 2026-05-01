@@ -7,7 +7,7 @@ anthropic==0.94.1
 anyio==4.13.0
 attrs==26.1.0
 blinkpy==0.25.5
--e git+https://github.com/bali0019/birdnest-ai.git@a4bd5f846da288d70fea97b7dac139f540c2f9cb#egg=cardinal_nest_monitor
+-e git+https://github.com/bali0019/birdnest-ai.git@a4bd5f846da288d70fea97b7dac139f540c2f9cb#egg=birdnest_ai
 certifi==2026.2.25
 charset-normalizer==3.4.7
 distro==1.9.0

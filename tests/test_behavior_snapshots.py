@@ -23,10 +23,10 @@ import time
 
 import pytest
 
-from cardinal_nest_monitor.events import evaluate
-from cardinal_nest_monitor.predicates import is_confirmed_chick_sighting
-from cardinal_nest_monitor.schema import NestObservation, Severity
-from cardinal_nest_monitor.state import StateStore
+from birdnest_ai.events import evaluate
+from birdnest_ai.predicates import is_confirmed_chick_sighting
+from birdnest_ai.schema import NestObservation, Severity
+from birdnest_ai.state import StateStore
 
 
 _PROFILES = ["northern_cardinal", "american_robin"]
@@ -119,7 +119,7 @@ def test_attending_parent_returned_title_from_profile(use_profile, store):
     # state.in_absence flips here, so we need PRE-record state for the rule.
     # Simpler: use an explicit pre-state mock matching what the prior
     # absence put in place.
-    from cardinal_nest_monitor.schema import NestState
+    from birdnest_ai.schema import NestState
     pre_state = NestState(
         last_attending_parent_seen_ts=t0,
         in_absence=True,
@@ -200,7 +200,7 @@ def test_egg_laying_begin_title_from_profile(use_profile, store):
     profile = use_profile
     t0 = time.time()
     # Seed: building_nest stage, no prior sitting.
-    from cardinal_nest_monitor.schema import NestState
+    from birdnest_ai.schema import NestState
     pre_state = NestState(
         lifecycle_stage="building_nest",
         last_attending_parent_seen_ts=None,
@@ -259,7 +259,7 @@ def test_incubation_begin_title_and_summary_from_profile(use_profile, store):
 
     # Pre-state in egg_laying with the start far enough back that the
     # transition window is open.
-    from cardinal_nest_monitor.schema import NestState
+    from birdnest_ai.schema import NestState
     pre_state = NestState(
         lifecycle_stage="egg_laying",
         egg_laying_started_ts=t0 - sitting_window_s - 60,
@@ -303,7 +303,7 @@ def test_hatch_title_from_profile(use_profile, store, monkeypatch):
     """
     profile = use_profile
     t0 = time.time()
-    from cardinal_nest_monitor.schema import NestState
+    from birdnest_ai.schema import NestState
     pre_state = NestState(
         lifecycle_stage="incubation",
         first_young_sighting_ts=t0 - 30 * 60,  # 30 min ago — well inside window
@@ -338,7 +338,7 @@ def test_fledge_title_from_profile(use_profile, store):
     profile = use_profile
     t0 = time.time()
     lc = profile.lifecycle
-    from cardinal_nest_monitor.schema import NestState
+    from birdnest_ai.schema import NestState
     pre_state = NestState(
         lifecycle_stage="feeding",
         hatch_detected_ts=t0 - 5 * 86400,
@@ -389,7 +389,7 @@ def test_rule_id_taxonomy_lockdown():
 
     src = (
         Path(__file__).parent.parent
-        / "src" / "cardinal_nest_monitor" / "events.py"
+        / "src" / "birdnest_ai" / "events.py"
     ).read_text()
 
     # Find all `rule_id="..."` and `rule_id='...'` literals.

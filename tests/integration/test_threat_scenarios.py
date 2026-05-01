@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from cardinal_nest_monitor import analyzer as analyzer_mod
-from cardinal_nest_monitor import main as main_mod
-from cardinal_nest_monitor.schema import Severity
+from birdnest_ai import analyzer as analyzer_mod
+from birdnest_ai import main as main_mod
+from birdnest_ai.schema import Severity
 
 
 def _pipeline(store, notifier, evidence):
@@ -45,7 +45,7 @@ async def test_high_alert_thrasher_at_nest(
     behaviour is covered separately in test_verification.py.
     """
     # Disable Opus verification to keep this a pure rule-3 test.
-    settings = __import__("cardinal_nest_monitor.config", fromlist=["get_settings"]).get_settings()
+    settings = __import__("birdnest_ai.config", fromlist=["get_settings"]).get_settings()
     monkeypatch.setattr(settings, "verify_alerts_with_opus", False)
 
     captured: list = []
@@ -81,7 +81,7 @@ async def test_critical_direct_interaction(
     Verifier disabled so this is single-pass. Verifier disagreement cases
     are covered in test_verification.py.
     """
-    settings = __import__("cardinal_nest_monitor.config", fromlist=["get_settings"]).get_settings()
+    settings = __import__("birdnest_ai.config", fromlist=["get_settings"]).get_settings()
     monkeypatch.setattr(settings, "verify_alerts_with_opus", False)
 
     captured: list = []

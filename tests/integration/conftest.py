@@ -1,4 +1,4 @@
-"""Shared fixtures for the Cardinal Nest Monitor integration suite.
+"""Shared fixtures for the Birdnest AI integration suite.
 
 These tests post REAL Discord messages to the user's webhooks — every one
 carries a ``[TEST]`` prefix via ``settings.test_mode`` so they are easy to
@@ -27,11 +27,11 @@ from pathlib import Path
 
 import pytest
 
-from cardinal_nest_monitor.config import get_settings
-from cardinal_nest_monitor.evidence import EvidenceWriter
-from cardinal_nest_monitor.notifier import Notifier
-from cardinal_nest_monitor.schema import NestObservation
-from cardinal_nest_monitor.state import StateStore
+from birdnest_ai.config import get_settings
+from birdnest_ai.evidence import EvidenceWriter
+from birdnest_ai.notifier import Notifier
+from birdnest_ai.schema import NestObservation
+from birdnest_ai.state import StateStore
 
 
 # Path to reference JPEGs bundled with the repo. The analyzer is mocked
@@ -134,7 +134,7 @@ def enable_test_mode(monkeypatch):
 
     # Shim: ensure main.settings resolves even though the parallel agent's
     # on_image implementation references a bare `settings` name.
-    from cardinal_nest_monitor import main as main_mod
+    from birdnest_ai import main as main_mod
     if not hasattr(main_mod, "settings"):
         monkeypatch.setattr(main_mod, "settings", settings, raising=False)
 

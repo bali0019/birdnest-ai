@@ -18,12 +18,12 @@ from __future__ import annotations
 
 import pytest
 
-from cardinal_nest_monitor.prompts import (
+from birdnest_ai.prompts import (
     invalidate_prompt_caches,
     render_analyzer_system_prompt,
     render_prefilter_system_prompt,
 )
-from cardinal_nest_monitor.verifier import is_target_positive_no_threat
+from birdnest_ai.verifier import is_target_positive_no_threat
 
 
 _PROFILES = ["northern_cardinal", "american_robin"]
@@ -157,12 +157,12 @@ def test_analyzer_prompt_caches_per_profile():
     string instance (lru_cache hit). Validates the cache key is the
     profile slug."""
     invalidate_prompt_caches()
-    from cardinal_nest_monitor.species import (
+    from birdnest_ai.species import (
         clear_species_profile_cache,
         get_species_profile,
     )
-    from cardinal_nest_monitor.species.loader import builtin_profile_path
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.species.loader import builtin_profile_path
+    from birdnest_ai.config import get_settings
 
     settings = get_settings()
     original = settings.species_profile_path
@@ -235,7 +235,7 @@ def test_is_target_positive_no_threat_uses_profile_match_terms(use_profile):
     """The verifier's content-aware suppression must match against the
     active profile's match_terms — NOT the hardcoded 'cardinal'
     substring (the pre-Phase-5 bug)."""
-    from cardinal_nest_monitor.schema import NestObservation
+    from birdnest_ai.schema import NestObservation
 
     profile = use_profile
     invalidate_prompt_caches()
@@ -264,7 +264,7 @@ def test_is_target_positive_no_threat_uses_profile_match_terms(use_profile):
 def test_is_target_positive_no_threat_returns_false_with_threat_present(use_profile):
     """If threat_species_detected has any entry, the predicate is False
     regardless of species_detected — the threat takes precedence."""
-    from cardinal_nest_monitor.schema import NestObservation
+    from birdnest_ai.schema import NestObservation
 
     profile = use_profile
     invalidate_prompt_caches()
@@ -293,7 +293,7 @@ def test_is_cardinal_positive_no_threat_alias_still_callable():
     """Backwards-compat alias — preserved so any external callers
     (tools/dryrun, third-party scripts) keep working through the
     rename. Remove once all callers are updated."""
-    from cardinal_nest_monitor.verifier import is_cardinal_positive_no_threat
+    from birdnest_ai.verifier import is_cardinal_positive_no_threat
     assert is_cardinal_positive_no_threat is is_target_positive_no_threat
 
 
@@ -311,7 +311,7 @@ def test_verifier_log_message_is_profile_neutral():
 
     src = (
         Path(__file__).parent.parent
-        / "src" / "cardinal_nest_monitor" / "verifier.py"
+        / "src" / "birdnest_ai" / "verifier.py"
     ).read_text()
 
     # Find log calls that mention positive-no-threat suppression. The

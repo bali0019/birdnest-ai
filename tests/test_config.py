@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cardinal_nest_monitor.config import Settings
+from birdnest_ai.config import Settings
 
 
 _VALID = "https://discord.com/api/webhooks/123/abc"

@@ -6,9 +6,9 @@ import time
 
 import pytest
 
-from cardinal_nest_monitor.events import evaluate
-from cardinal_nest_monitor.schema import NestObservation, Severity
-from cardinal_nest_monitor.state import StateStore
+from birdnest_ai.events import evaluate
+from birdnest_ai.schema import NestObservation, Severity
+from birdnest_ai.state import StateStore
 
 
 def _make_obs(**kwargs) -> NestObservation:
@@ -168,7 +168,7 @@ def test_cooldown_active_ignores_future_alerts(store):
     `(ref - row_ts) < window_s` check fired True for the negative
     difference, silently suppressing legitimate older backfill alerts.
     """
-    from cardinal_nest_monitor.schema import AlertDecision, Severity
+    from birdnest_ai.schema import AlertDecision, Severity
     decision = AlertDecision(
         severity=Severity.CRITICAL,
         title="Future alert",
@@ -194,7 +194,7 @@ def test_latest_alert_for_species_ignores_future_alerts(store):
     escalation logic could see a future higher-severity alert and refuse
     to fire a legitimate older alert during backfill drain.
     """
-    from cardinal_nest_monitor.schema import AlertDecision, Severity
+    from birdnest_ai.schema import AlertDecision, Severity
     decision = AlertDecision(
         severity=Severity.CRITICAL,
         title="Future alert",
@@ -217,7 +217,7 @@ def test_latest_alert_for_species_ignores_future_alerts(store):
 def test_cooldown_still_works_for_historical_alerts(store):
     """Negative control: cooldown_active() must still return True when a
     LEGITIMATE prior alert (ts <= ref_ts) is within the window."""
-    from cardinal_nest_monitor.schema import AlertDecision, Severity
+    from birdnest_ai.schema import AlertDecision, Severity
     decision = AlertDecision(
         severity=Severity.CRITICAL,
         title="Real prior alert",
@@ -244,8 +244,8 @@ def test_lifecycle_low_does_not_silence_mother_returned(store):
     rule_cooldown_active("attending_parent_returned", ...) must allow mother_returned
     to fire even if a LOW hatch alert was just recorded.
     """
-    from cardinal_nest_monitor.events import evaluate
-    from cardinal_nest_monitor.schema import AlertDecision, Severity, NestObservation
+    from birdnest_ai.events import evaluate
+    from birdnest_ai.schema import AlertDecision, Severity, NestObservation
 
     now = time.time()
     # Seed state: she was here, then she left → in_absence=True.
@@ -306,8 +306,8 @@ def test_mother_returned_self_cooldown_still_works(store):
     mother_returned alert within the window MUST still suppress a new
     mother_returned. We're scoping by rule_id, not removing the cooldown.
     """
-    from cardinal_nest_monitor.events import evaluate
-    from cardinal_nest_monitor.schema import AlertDecision, Severity
+    from birdnest_ai.events import evaluate
+    from birdnest_ai.schema import AlertDecision, Severity
 
     now = time.time()
     store.record(
@@ -356,7 +356,7 @@ def test_rule_cooldown_active_basic():
     """Direct test of the new helper."""
     import tempfile
     from pathlib import Path
-    from cardinal_nest_monitor.schema import AlertDecision, Severity
+    from birdnest_ai.schema import AlertDecision, Severity
 
     with tempfile.TemporaryDirectory() as td:
         s = StateStore(Path(td) / "state.sqlite")

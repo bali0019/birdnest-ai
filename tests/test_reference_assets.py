@@ -99,7 +99,7 @@ def test_robin_reference_assets_handles_empty_arrays(use_profile):
 def test_lifecycle_regression_resolves_cardinal_dir(use_profile):
     """tools.lifecycle_regression._resolve_lifecycle_dir() returns the
     cardinal lifecycle path under the active cardinal profile."""
-    from cardinal_nest_monitor.tools.lifecycle_regression import (
+    from birdnest_ai.tools.lifecycle_regression import (
         _resolve_lifecycle_dir,
     )
 
@@ -117,7 +117,7 @@ def test_lifecycle_regression_raises_when_profile_dir_missing(use_profile):
     disk (robin's case until assets are collected), the CLI's resolver
     raises FileNotFoundError with a clear message — fails fast rather
     than silently running on zero images."""
-    from cardinal_nest_monitor.tools.lifecycle_regression import (
+    from birdnest_ai.tools.lifecycle_regression import (
         _resolve_lifecycle_dir,
     )
 

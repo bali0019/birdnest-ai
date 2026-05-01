@@ -28,13 +28,13 @@ from unittest.mock import AsyncMock, patch
 import aiohttp
 import pytest
 
-from cardinal_nest_monitor.notifier import (
+from birdnest_ai.notifier import (
     Notifier,
     _redact,
     _scrub_response_body,
     _with_allowed_mentions,
 )
-from cardinal_nest_monitor.schema import (
+from birdnest_ai.schema import (
     AlertDecision,
     NestObservation,
     Severity,
@@ -297,7 +297,7 @@ def test_transport_error_log_is_redacted(notifier, caplog):
     async def _run():
         async def do_post():
             raise err
-        caplog.set_level(logging.ERROR, logger="cardinal_nest_monitor.notifier")
+        caplog.set_level(logging.ERROR, logger="birdnest_ai.notifier")
         return await notifier._post_with_retry(do_post, severity=Severity.MEDIUM)
 
     result = asyncio.run(_run())
@@ -315,7 +315,7 @@ def test_response_body_log_is_redacted_and_capped(notifier, caplog):
     async def _run():
         async def do_post():
             return 400, {}, body
-        caplog.set_level(logging.ERROR, logger="cardinal_nest_monitor.notifier")
+        caplog.set_level(logging.ERROR, logger="birdnest_ai.notifier")
         return await notifier._post_with_retry(do_post, severity=None)
 
     asyncio.run(_run())

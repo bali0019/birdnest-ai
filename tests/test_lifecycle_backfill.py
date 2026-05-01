@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cardinal_nest_monitor.tools import lifecycle_backfill
+from birdnest_ai.tools import lifecycle_backfill
 
 
 def _make_db(

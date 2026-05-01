@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import pytest
 
-from cardinal_nest_monitor.schema import (
+from birdnest_ai.schema import (
     UNKNOWN_THREAT,
     build_nest_tool,
     build_prefilter_tool,
 )
-from cardinal_nest_monitor.species import (
+from birdnest_ai.species import (
     builtin_profile_path,
     load_species_profile,
 )
@@ -194,9 +194,9 @@ def test_nest_observation_coerces_unknown_threat_to_sentinel(monkeypatch):
     list, the validator buckets it as 'unknown' — matching the prior
     ThreatSpecies.UNKNOWN enum behavior. Important so downstream rules
     still fire on 'there's a threat, we can't name it'."""
-    from cardinal_nest_monitor.config import get_settings
-    from cardinal_nest_monitor.schema import NestObservation
-    from cardinal_nest_monitor.species import clear_species_profile_cache
+    from birdnest_ai.config import get_settings
+    from birdnest_ai.schema import NestObservation
+    from birdnest_ai.species import clear_species_profile_cache
 
     # Pin the active profile to cardinal for this test (regardless of
     # SPECIES_PROFILE_PATH in the ambient env).
@@ -230,9 +230,9 @@ def test_nest_observation_coerces_unknown_threat_to_sentinel(monkeypatch):
 def test_nest_observation_accepts_profile_declared_threats(monkeypatch):
     """Every threat name declared in the active profile must validate
     through unchanged."""
-    from cardinal_nest_monitor.config import get_settings
-    from cardinal_nest_monitor.schema import NestObservation
-    from cardinal_nest_monitor.species import clear_species_profile_cache
+    from birdnest_ai.config import get_settings
+    from birdnest_ai.schema import NestObservation
+    from birdnest_ai.species import clear_species_profile_cache
 
     monkeypatch.setattr(
         get_settings(),

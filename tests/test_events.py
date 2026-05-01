@@ -6,9 +6,9 @@ import time
 
 import pytest
 
-from cardinal_nest_monitor.events import evaluate
-from cardinal_nest_monitor.schema import NestObservation, NestState, Severity
-from cardinal_nest_monitor.state import StateStore
+from birdnest_ai.events import evaluate
+from birdnest_ai.schema import NestObservation, NestState, Severity
+from birdnest_ai.state import StateStore
 
 
 def _make_obs(**kwargs) -> NestObservation:
@@ -114,7 +114,7 @@ def test_egg_count_drop_CRITICAL(store, monkeypatch):
     reliably see the eggs. Test enables the flag to exercise the original
     semantic.
     """
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.config import get_settings
     monkeypatch.setattr(get_settings(), "enable_egg_count_alerts", True)
 
     t0 = time.time()
@@ -247,13 +247,13 @@ def test_long_absence_title_tracks_elapsed_bucket(store):
     (e.g. back to 3 min or up to 10 min), this test proves the title
     will auto-update rather than silently desyncing.
     """
-    from cardinal_nest_monitor.events import _LONG_ABSENCE_THRESHOLD
+    from birdnest_ai.events import _LONG_ABSENCE_THRESHOLD
 
     # Cooldown is 5 min, so to exercise multiple buckets in one test we
     # use a fresh store + observation sequence for each bucket.
     def _fire_alert_at(absence_s: int):
         # Fresh store per sub-test so the cooldown window can't suppress.
-        from cardinal_nest_monitor.state import StateStore
+        from birdnest_ai.state import StateStore
         s = StateStore(":memory:")
         try:
             t0 = time.time()
@@ -347,7 +347,7 @@ def test_medium_suppressed_during_quiet_hours(store, monkeypatch):
     cardinal's plumage blends with nest material in grayscale. She's
     almost certainly sleeping on the eggs.
     """
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.config import get_settings
 
     settings = get_settings()
     monkeypatch.setattr(settings, "quiet_hours", "00:00-23:59")
@@ -370,7 +370,7 @@ def test_medium_suppressed_during_quiet_hours(store, monkeypatch):
 
 def test_medium_fires_outside_quiet_hours(store, monkeypatch):
     """Same scenario but outside quiet hours — MEDIUM must fire."""
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.config import get_settings
 
     settings = get_settings()
     monkeypatch.setattr(settings, "quiet_hours", "")
@@ -396,7 +396,7 @@ def test_observation_indicates_ir_mode_detects_real_phrases():
     evidence/2026-04-16/20-48-07_MEDIUM_unknown_bird/observation.json for the
     canonical false-positive that motivated this helper.
     """
-    from cardinal_nest_monitor.events import observation_indicates_ir_mode
+    from birdnest_ai.events import observation_indicates_ir_mode
 
     real_ir_summaries = [
         "A compact bird is settled low in the nest cup at night in IR mode",
@@ -427,7 +427,7 @@ def test_medium_suppressed_when_image_is_ir_outside_quiet_hours(store, monkeypat
     accumulated despite Sonnet correctly seeing 'a compact bird in the
     nest cup'. Replays the canonical evidence/2026-04-16/20-48-07_... case.
     """
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.config import get_settings
 
     settings = get_settings()
     monkeypatch.setattr(settings, "quiet_hours", "")  # disable quiet hours entirely
@@ -594,7 +594,7 @@ def test_egg_loss_silent_when_flag_off(store, monkeypatch):
     so egg-count observations can't be trusted. The rule stays in code
     for future top-down deployments.
     """
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.config import get_settings
     monkeypatch.setattr(get_settings(), "enable_egg_count_alerts", False)
 
     t0 = time.time()
@@ -623,7 +623,7 @@ def test_egg_loss_still_fires_when_flag_on_future_camera(store, monkeypatch):
     """Negative control: flag-on (as for a hypothetical top-down camera)
     still produces CRITICAL egg_loss. Ensures the rule isn't dead code.
     """
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.config import get_settings
     monkeypatch.setattr(get_settings(), "enable_egg_count_alerts", True)
 
     t0 = time.time()
@@ -744,7 +744,7 @@ def _ambig_obs(**overrides) -> NestObservation:
 
 def test_is_ambiguous_occupied_cup_helper():
     """Direct unit test of the predicate."""
-    from cardinal_nest_monitor.events import is_ambiguous_occupied_cup
+    from birdnest_ai.events import is_ambiguous_occupied_cup
 
     # Positive: canonical ambig frame
     assert is_ambiguous_occupied_cup(_ambig_obs()) is True
@@ -845,7 +845,7 @@ def test_second_consecutive_ambig_frame_promotes_to_soft_presence(store):
 def test_pending_ambig_expires_after_window(store):
     """If no 2nd consecutive ambig frame arrives within the window, the
     next ambig frame is treated as a fresh 1st (window restarts)."""
-    from cardinal_nest_monitor.state import _AMBIGUOUS_CONFIRM_WINDOW_S
+    from birdnest_ai.state import _AMBIGUOUS_CONFIRM_WINDOW_S
 
     t0 = time.time()
     store.record(t0, False, None, _ambig_obs(), None)
@@ -929,7 +929,7 @@ def test_unknown_species_direct_attack_still_fires_critical(store):
     signal (thrasher's beak in the cup on a single frame Sonnet couldn't
     species-ID). Real attacks must always reach the CRITICAL path.
     """
-    from cardinal_nest_monitor.events import is_ambiguous_occupied_cup
+    from birdnest_ai.events import is_ambiguous_occupied_cup
 
     t0 = time.time()
     # Frame: attending_parent_on_nest=uncertain (can't ID), threat_species=unknown,
@@ -975,7 +975,7 @@ def test_ambig_frame_in_feeding_stage_does_not_trigger_lifecycle(store, monkeypa
     attending_parent_on_nest != 'true' and all fledge preconditions are met.
     With the reorder, the ambig check fires first and returns None.
     """
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.config import get_settings
     monkeypatch.setattr(get_settings(), "lifecycle_tracking_enabled", True)
 
     # Seed feeding-stage state directly via SQL to skip the 2-sighting dance.

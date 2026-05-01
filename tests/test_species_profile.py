@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cardinal_nest_monitor.species import (
+from birdnest_ai.species import (
     SpeciesProfile,
     builtin_profile_path,
     clear_species_profile_cache,
@@ -227,7 +227,7 @@ def test_get_species_profile_uses_configured_path(monkeypatch):
     settings and load that file. Cached across calls within a single
     process."""
     clear_species_profile_cache()
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.config import get_settings
 
     # get_settings() is lru_cached; override the attribute directly
     # (matches how other tests monkeypatch settings).
@@ -242,7 +242,7 @@ def test_get_species_profile_is_cached(monkeypatch):
     """Second call to get_species_profile() with the same path must
     return the exact same object (cached)."""
     clear_species_profile_cache()
-    from cardinal_nest_monitor.config import get_settings
+    from birdnest_ai.config import get_settings
 
     monkeypatch.setattr(get_settings(), "species_profile_path", CARDINAL_PATH)
     a = get_species_profile()

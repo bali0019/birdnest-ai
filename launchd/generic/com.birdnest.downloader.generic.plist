@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.birdnest.downloader.generic</string>
+
+    <!-- Generic-nest-monitor branch deployment.
+         This plist is ONLY for the generic (species-profile-driven) service.
+         The production cardinal service uses com.birdnest.downloader
+         (one directory up). Labels are explicitly suffixed `.generic` so
+         both services can be loaded at the same time without collision. -->
+
+    <!-- Path to the Python interpreter inside the project venv. -->
+    <!-- Edit if your repo lives elsewhere. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/birdnest-ai/venv/bin/python</string>
+        <string>-m</string>
+        <string>birdnest_ai</string>
+        <string>--role=downloader</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/path/to/birdnest-ai</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart on crash, but back off so a crash-loop doesn't hammer Blink. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Restrict runtime file mode. 63 decimal = 077 octal → files 0600,
+         dirs 0700. Protects spool JPEGs, state.sqlite, evidence dirs, and
+         any re-saved blink_credentials.json from other local users. -->
+    <key>Umask</key>
+    <integer>63</integer>
+
+    <!-- Separate log file so generic-service logs don't interleave with
+         production cardinal service logs. -->
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USERNAME/Library/Logs/birdnest-ai/downloader.generic.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USERNAME/Library/Logs/birdnest-ai/downloader.generic.err.log</string>
+
+    <!-- Inherit minimal env; .env is loaded by pydantic-settings at runtime.
+         The generic branch's config defaults point at ./data_generic/,
+         ./evidence_generic/, etc. — see config.py path-isolation note. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+</dict>
+</plist>
