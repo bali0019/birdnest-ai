@@ -14,36 +14,11 @@ from anthropic import AsyncAnthropic
 
 from cardinal_nest_monitor._image import downscale_jpeg_b64
 from cardinal_nest_monitor.config import get_settings
+from cardinal_nest_monitor.prompts import render_prefilter_system_prompt
 from cardinal_nest_monitor.schema import PrefilterResult, build_prefilter_tool
 from cardinal_nest_monitor.species import get_species_profile
 
 log = logging.getLogger(__name__)
-
-
-_SYSTEM_PROMPT = (
-    "You are a fast prefilter for a Northern Cardinal nest camera in Marietta, "
-    "Georgia. The nest is in a rose bush near a back door. The deep analyzer "
-    "(Opus) handles all hard species ID. Your job is ONLY to filter out boring "
-    "static scenes so we don't waste compute on them.\n\n"
-    "Return \"false\" (no novel activity) ONLY if the image clearly shows ONE of:\n"
-    "  (a) a fully empty nest cup with NO birds or animals visible anywhere in frame\n"
-    "  (b) just rose-bush leaves and branches with no animals visible\n"
-    "  (c) static scene with just wind-moved foliage\n\n"
-    "Return \"true\" (novel — needs Opus) if you see any of:\n"
-    "  - any non-cardinal animal (Brown Thrasher, Blue Jay, squirrel, chipmunk, etc.)\n"
-    "  - the cardinal acting alarmed, flying, or moving rapidly\n"
-    "  - the nest disturbed, broken, or displaced\n"
-    "  - a person or hand near the nest\n\n"
-    "Return \"uncertain\" — and prefer this liberally — whenever:\n"
-    "  - The image is INFRARED / nighttime / low-contrast and identification is hard\n"
-    "  - You think you might see a bird or animal but aren't fully confident\n"
-    "  - The cardinal *might* be present but you can't be certain (DO NOT GUESS)\n"
-    "  - The nest is partially obscured or the angle makes it ambiguous\n\n"
-    "DO NOT confabulate the cardinal's presence. If you cannot clearly distinguish "
-    "her plumage and shape from the surrounding straw and foliage, return "
-    "\"uncertain\" — never \"false\". Better to spend 5¢ on a second look than to "
-    "miss a real absence or threat. Always use the report_prefilter tool."
-)
 
 
 # Module-level client cache — lazy-initialised so tests can monkeypatch.
@@ -82,15 +57,16 @@ async def prefilter(jpeg_bytes: bytes) -> PrefilterResult:
         }
     ]
 
+    profile = get_species_profile()
     system = [
         {
             "type": "text",
-            "text": _SYSTEM_PROMPT,
+            "text": render_prefilter_system_prompt(profile),
             "cache_control": {"type": "ephemeral"},
         }
     ]
 
-    prefilter_tool = build_prefilter_tool(get_species_profile())
+    prefilter_tool = build_prefilter_tool(profile)
     last_err: Exception | None = None
     for attempt in range(2):
         try:

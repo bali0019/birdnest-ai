@@ -72,30 +72,48 @@ def compute_verification_decision(
     return sonnet_decision
 
 
-def is_cardinal_positive_no_threat(opus_obs: NestObservation) -> bool:
-    """Content-aware check: Opus observation indicates the cardinal AND no threat.
+def is_target_positive_no_threat(opus_obs: NestObservation) -> bool:
+    """Content-aware check: Opus observation indicates the target species
+    AND no threat.
 
     Returns True when:
-      - "cardinal" appears (case-insensitive substring) in any element of
-        species_detected, AND
+      - any element of species_detected contains (case-insensitive) one
+        of the active profile's ``target.match_terms``, AND
       - threat_species_detected is empty.
 
-    This is a correctness fix for a failure mode seen 2026-04-17: Opus
-    correctly identified the female cardinal (no threat) but set
-    direct_nest_interaction=true (a schema violation for a cardinal), which
-    made Opus's rule-engine output CRITICAL-rank. Pure severity comparison
-    then "confirmed" Sonnet's HIGH — firing a false alert even though Opus
-    had said there was no threat.
+    Phase 5 (2026-05-01): was ``is_cardinal_positive_no_threat`` with a
+    hardcoded ``"cardinal"`` substring. Now reads from the active profile
+    so the same correctness rule fires for the robin profile against
+    "robin"/"american robin", and any future profile against its own
+    declared match_terms.
 
-    If this is True, the alert should be suppressed regardless of what
-    severity Opus's evaluate() produced.
+    Origin failure mode (2026-04-17, cardinal): Opus correctly identified
+    the female cardinal (no threat) but set direct_nest_interaction=true
+    (a schema violation for the target species), which made Opus's
+    rule-engine output CRITICAL-rank. Pure severity comparison then
+    "confirmed" Sonnet's HIGH — firing a false alert even though Opus
+    had said there was no threat. If this returns True, the alert is
+    suppressed regardless of what severity Opus's evaluate() produced.
     """
+    from cardinal_nest_monitor.species import get_species_profile
+
     if opus_obs.threat_species_detected:
         return False
+    match_terms = [t.lower() for t in get_species_profile().target.match_terms]
+    if not match_terms:
+        return False
     for species in opus_obs.species_detected:
-        if "cardinal" in species.lower():
+        sp_lower = species.lower()
+        if any(term in sp_lower for term in match_terms):
             return True
     return False
+
+
+# Backwards-compatible alias for any existing callers (tests, dryrun
+# tool) that still import the old name. Remove in a follow-up commit
+# once the replay tests + behavior snapshots have validated under the
+# renamed function.
+is_cardinal_positive_no_threat = is_target_positive_no_threat
 
 
 def should_verify(decision: AlertDecision) -> bool:
@@ -128,7 +146,7 @@ def finalize_verification(
     Extracted from verify_alert() so the chronological replay test can
     exercise the exact decision path without building a second copy.
     """
-    if is_cardinal_positive_no_threat(opus_obs):
+    if is_target_positive_no_threat(opus_obs):
         return None
     opus_decision = evaluate(opus_obs, pre_state, store, ts, is_backfill=is_backfill)
     return compute_verification_decision(sonnet_decision, opus_decision)
@@ -193,17 +211,18 @@ async def verify_alert(
     )
 
     if final is None:
-        # Classify the suppression reason for the log line. The cardinal-
-        # positive override is operationally distinct from "Opus saw no
-        # alert" — the former says "we identified the cardinal, this is
-        # not a predator"; the latter says "Opus's rule engine disagreed
-        # with Sonnet for some other reason." Keeping both log shapes
-        # preserves post-hoc reviewability. Re-running the cheap
-        # is_cardinal_positive_no_threat predicate here avoids widening
-        # finalize_verification's return type just for this distinction.
-        if is_cardinal_positive_no_threat(opus_obs):
+        # Classify the suppression reason for the log line. The
+        # target-positive override is operationally distinct from "Opus
+        # saw no alert" — the former says "we identified the target
+        # species, this is not a predator"; the latter says "Opus's rule
+        # engine disagreed with Sonnet for some other reason." Keeping
+        # both log shapes preserves post-hoc reviewability. Re-running
+        # the cheap is_target_positive_no_threat predicate here avoids
+        # widening finalize_verification's return type just for this
+        # distinction.
+        if is_target_positive_no_threat(opus_obs):
             log.info(
-                "Opus verification: cardinal-positive no-threat override → "
+                "Opus verification: target-positive no-threat override → "
                 "SUPPRESSED (sonnet wanted %s %s). Opus species=%r, summary=%r",
                 sonnet_decision.severity.value,
                 sonnet_decision.rule_id,
