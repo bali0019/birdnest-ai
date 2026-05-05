@@ -428,7 +428,7 @@ def evaluate(
                 summary=observation.summary,
                 species=threats,
                 mother_present=observation.mother_cardinal_present,
-                absence_seconds=absence,
+                absence_seconds=int(absence),
                 confidence=observation.confidence,
                 rule_id="predator_absent",  # keep rule_id for cooldown/analytics continuity
             )
@@ -476,7 +476,7 @@ def evaluate(
                 summary=observation.summary,
                 species=[],
                 mother_present=observation.mother_cardinal_present,
-                absence_seconds=absence,
+                absence_seconds=int(absence),
                 confidence=observation.confidence,
                 rule_id="long_absence",
             )
