@@ -1,8 +1,14 @@
 # Cardinal Nest Monitor
 
 > [!NOTE]
-> ### 🐣 Nest Status: **Day 5 of feeding**
-> Hatch confirmed April 25 at 16:56 EDT. Both parents are feeding two visible chicks. *I'll update this page as the chicks grow and fledge.*
+> ### 🦅 Nest Status: **Fledged**
+> Chicks fledged on May 5, ten days after hatch. The parents will keep feeding them in the surrounding bushes for another two to three weeks.
+
+---
+
+![Two cardinal nestlings in the nest cup, well-feathered, eyes open, the evening before they fledged](evidence/reference/cardinal_chicks_last_evening.jpg)
+
+*May 4, 20:27 EDT. The last clear daylight view of the chicks in the nest. Heavily feathered, eyes open, one looking right at the camera. They were gone the next morning.*
 
 ---
 
@@ -14,7 +20,7 @@
 
 ![Brilliant red male Northern Cardinal perched on the nest rim](evidence/reference/male_cardinal_at_nest.jpg)
 
-*April 26, 08:26 EDT. The male cardinal at the nest for the first time, less than 16 hours after the hatch. He'll be feeding alongside the female now.*
+*April 26, 08:26 EDT. The male cardinal at the nest for the first time, less than 16 hours after the hatch. He fed alongside the female through the rest of the feeding stage.*
 
 ---
 
@@ -24,7 +30,7 @@
 - **Apr 14** — Incubation begins
 - **Apr 25** — **Hatch confirmed** (16:56 EDT)
 - **Apr 26** — Male cardinal first seen at the nest, feeding alongside mom
-- **May 4 – 6** — Fledge (expected)
+- **May 5** — **Fledged** (Day 10 post-hatch)
 
 ---
 
